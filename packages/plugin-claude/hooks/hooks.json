@@ -1,0 +1,44 @@
+{
+  "description": "Emit Claude Code lifecycle state to the Waiting Room daemon. All hooks are fire-and-forget (async) and must never block Claude: they call the `waiting-room emit` one-shot client, which fails open (exits 0 silently) when the daemon is unreachable.",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/waiting-room",
+            "args": ["emit", "agent_working"],
+            "async": true,
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/waiting-room",
+            "args": ["emit", "agent_needs_attention", "--reason", "stop"],
+            "async": true,
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/waiting-room",
+            "args": ["emit", "agent_needs_attention", "--reason", "notification"],
+            "async": true,
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

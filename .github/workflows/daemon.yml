@@ -1,0 +1,28 @@
+name: daemon
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+      - name: go vet
+        run: cd daemon && go vet ./...
+      - name: go test
+        run: cd daemon && go test ./...
+      - name: go build (static)
+        run: cd daemon && CGO_ENABLED=0 go build -trimpath -o /tmp/waiting-room ./cmd/waiting-room

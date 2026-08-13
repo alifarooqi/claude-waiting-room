@@ -1,0 +1,20 @@
+{
+  "name": "@waiting-room/cli",
+  "version": "0.1.0",
+  "description": "Binary distribution wrapper for the Waiting Room daemon (waiting-room).",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "waiting-room": "./bin/cli.js"
+  },
+  "files": [
+    "bin",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "echo \"@waiting-room/cli: platform binaries resolved at install (M5)\"",
+    "lint": "node --check bin/cli.js",
+    "test": "echo \"no tests yet\"",
+    "clean": "echo ok"
+  }
+}

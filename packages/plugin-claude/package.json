@@ -1,0 +1,22 @@
+{
+  "name": "@waiting-room/plugin-claude",
+  "version": "0.1.0",
+  "description": "Claude Code plugin that emits lifecycle state (working / needs attention) to the Waiting Room daemon.",
+  "license": "MIT",
+  "type": "module",
+  "files": [
+    "hooks",
+    ".claude-plugin",
+    "bin",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "node -e \"console.log('plugin-claude: static manifest, nothing to compile')\"",
+    "lint": "node -e \"require('fs').accessSync('hooks/hooks.json')\"",
+    "test": "echo \"no tests yet\"",
+    "clean": "echo ok"
+  },
+  "dependencies": {
+    "@waiting-room/cli": "workspace:*"
+  }
+}

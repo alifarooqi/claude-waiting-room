@@ -1,0 +1,5 @@
+{
+  "name": "claude-waiting-room",
+  "version": "0.1.0",
+  "description": "Pause side activities and snap tmux focus back when Claude Code needs you."
+}

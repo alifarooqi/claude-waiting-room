@@ -1,0 +1,22 @@
+{
+  "name": "claude-waiting-room",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Detect when Claude Code is busy vs needs attention; pause side activities and snap tmux focus back to the agent.",
+  "license": "MIT",
+  "packageManager": "pnpm@10.29.1",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "make build",
+    "test": "make test",
+    "lint": "make lint",
+    "fmt": "make fmt",
+    "integration": "make integration",
+    "clean": "make clean"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0"
+  }
+}

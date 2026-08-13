@@ -1,0 +1,20 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build artifacts
+packages/*/dist/
+daemon/bin/
+*.tsbuildinfo
+coverage/
+
+# Waiting Room runtime
+*.sock
+.waiting-room/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
