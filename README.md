@@ -54,8 +54,8 @@ make integration# real-tmux integration tests (requires tmux)
 ## Roadmap
 
 - [x] **M0** — Repo bootstrap
-- [ ] **M1** — Wire + UDS server
-- [ ] **M2** — Registry + bus + `emit`
+- [x] **M1** — Wire + UDS server
+- [x] **M2** — Registry + bus + `emit`
 - [ ] **M3** — Tmux controller + focus
 - [ ] **M4** — SDK (TS)
 - [ ] **M5** — plugin-claude + CLI packaging

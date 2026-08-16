@@ -31,9 +31,11 @@ func main() {
 	case "help", "-h", "--help":
 		usage(os.Stdout)
 	case "daemon":
-		notImplemented("daemon", "M1")
+		os.Exit(runDaemon(os.Args[2:]))
 	case "emit":
-		notImplemented("emit", "M2")
+		os.Exit(runEmit(os.Args[2:]))
+	case "watch":
+		os.Exit(runWatch(os.Args[2:]))
 	case "status":
 		notImplemented("status", "M3")
 	default:
@@ -43,9 +45,7 @@ func main() {
 	}
 }
 
-// notImplemented reports a stub command and exits non-zero. Individual `emit`
-// invocations from Claude Code hooks must never reach this path once M2 ships —
-// they fail open instead.
+// notImplemented reports a stub command and exits non-zero.
 func notImplemented(cmd, milestone string) {
 	fmt.Fprintf(os.Stderr, "waiting-room: %q is not implemented yet (milestone %s)\n", cmd, milestone)
 	os.Exit(1)
@@ -60,6 +60,7 @@ Usage:
 Commands:
   daemon    Run the background IPC daemon
   emit      Emit a lifecycle event (used by Claude Code hooks)
+  watch     Debug subscriber: print session state changes live
   status    Show daemon + session registry status
   version   Print version
   help      Show this help`)
