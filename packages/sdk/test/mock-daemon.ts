@@ -3,6 +3,7 @@
  * JSON-lines protocol (hello/ack/snapshot/ping/focus_request) over a UDS.
  */
 import { createServer, type Server, type Socket } from 'node:net';
+import { unlinkSync } from 'node:fs';
 import type { AgentState } from '../src/protocol.js';
 
 interface AnyMessage {
@@ -24,6 +25,13 @@ export class MockDaemon {
 
   start(): Promise<void> {
     return new Promise((resolve) => {
+      // A previous server's close does not remove the socket file; Linux
+      // refuses to bind over a stale path (EADDRINUSE), so unlink first.
+      try {
+        unlinkSync(this.path);
+      } catch {
+        // nothing to remove
+      }
       this.server = createServer((sock) => {
         this.clients.add(sock);
         this.write(sock, { v: 1, type: 'hello', server_version: 'mock' });
