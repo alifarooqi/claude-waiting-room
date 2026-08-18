@@ -8,14 +8,15 @@ package server
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -23,6 +24,24 @@ import (
 	"github.com/alifarooqi/claude-waiting-room/daemon/internal/tmux"
 	"github.com/alifarooqi/claude-waiting-room/daemon/internal/wire"
 )
+
+// logBuffer collects daemon log output so failures can dump it.
+type logBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (l *logBuffer) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.buf.Write(p)
+}
+
+func (l *logBuffer) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.buf.String()
+}
 
 // tmuxHarness drives a private tmux server.
 type tmuxHarness struct {
@@ -89,6 +108,8 @@ func waitFocused(t *testing.T, h *tmuxHarness, want string) {
 	}
 }
 
+const paneDumpFmt = "#{pane_id} session=#{session_name} window=#{window_id} active=#{pane_active} winactive=#{window_active}"
+
 // TestIntegrationFocusSwap is the M3 definition-of-done: with a real tmux
 // server, Claude halting snaps focus to the Claude pane and Claude resuming
 // pushes focus back to the bound activity pane.
@@ -104,7 +125,14 @@ func TestIntegrationFocusSwap(t *testing.T) {
 	dir := t.TempDir()
 	uds := filepath.Join(dir, "d.sock")
 	info := filepath.Join(dir, "daemon.info")
-	logger := log.New(io.Discard, "", 0)
+	lb := &logBuffer{}
+	t.Cleanup(func() {
+		if t.Failed() {
+			t.Logf("daemon log:\n%s", lb.String())
+			t.Logf("tmux panes:\n%s", h.run(t, "list-panes", "-a", "-F", paneDumpFmt))
+		}
+	})
+	logger := log.New(lb, "", 0)
 	core := NewCore("test", logger, tmux.NewShell)
 	srv := New(Options{SocketPath: uds, InfoPath: info, Version: "test", Log: logger}, core)
 	ctx, cancel := context.WithCancel(context.Background())
