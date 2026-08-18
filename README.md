@@ -49,7 +49,20 @@ make build      # build the Go binary (daemon/bin/waiting-room) + all TS package
 make test       # Go + TS unit tests
 make lint       # go vet + TS typecheck
 make integration# real-tmux integration tests (requires tmux)
+make plugin-pack# cross-compile 4 platform binaries + vendor into plugin-claude
 ```
+
+## Try it (development)
+
+```bash
+make build
+./daemon/bin/waiting-room daemon &      # background IPC daemon
+./daemon/bin/waiting-room watch         # live state observer
+# in another tmux pane, run Claude with the plugin:
+claude --plugin-dir packages/plugin-claude
+```
+
+Submit a prompt in Claude → focus jumps to your activity pane; Claude stops or asks permission → focus snaps back. See [`packages/plugin-claude`](packages/plugin-claude).
 
 ## Roadmap
 
@@ -58,7 +71,7 @@ make integration# real-tmux integration tests (requires tmux)
 - [x] **M2** — Registry + bus + `emit`
 - [x] **M3** — Tmux controller + focus
 - [x] **M4** — SDK (TS)
-- [ ] **M5** — plugin-claude + CLI packaging
+- [x] **M5** — plugin-claude + CLI packaging
 - [ ] **M6** — Reference activities (Snake, math)
 - [ ] **M7** — Hardening + v1 release
 

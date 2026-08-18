@@ -1,0 +1,34 @@
+#!/bin/sh
+# Resolve the waiting-room binary for Claude Code hook invocations:
+#   1. $WAITING_ROOM_BIN (explicit override)
+#   2. vendored platform binary next to this script (populated by
+#      `make plugin-pack` / release packaging)
+#   3. a monorepo dev checkout (packages/plugin-claude/bin → daemon/bin)
+#   4. `waiting-room` on PATH
+#   5. fail open: exit 0 silently — hooks must never break Claude.
+set -u
+
+if [ -n "${WAITING_ROOM_BIN:-}" ] && [ -x "${WAITING_ROOM_BIN}" ]; then
+  exec "${WAITING_ROOM_BIN}" "$@"
+fi
+
+dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd) || exit 0
+
+for candidate in "$dir"/waiting-room-*; do
+  if [ -x "$candidate" ]; then
+    exec "$candidate" "$@"
+  fi
+done
+
+# Dev checkout: this script is packages/plugin-claude/bin/waiting-room.
+repo_bin="$dir/../../../daemon/bin/waiting-room"
+if [ -x "$repo_bin" ]; then
+  exec "$repo_bin" "$@"
+fi
+
+if command -v waiting-room >/dev/null 2>&1; then
+  exec waiting-room "$@"
+fi
+
+# Fail open (see plugin README: hooks are async and must never error Claude).
+exit 0

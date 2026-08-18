@@ -12,9 +12,15 @@
     "README.md"
   ],
   "scripts": {
-    "build": "echo \"@waiting-room/cli: platform binaries resolved at install (M5)\"",
+    "build": "echo \"@waiting-room/cli: platform binaries resolved at install (make cli-pack)\"",
     "lint": "node --check bin/cli.js",
     "test": "echo \"no tests yet\"",
     "clean": "echo ok"
+  },
+  "optionalDependencies": {
+    "@waiting-room/cli-darwin-arm64": "workspace:*",
+    "@waiting-room/cli-darwin-amd64": "workspace:*",
+    "@waiting-room/cli-linux-arm64": "workspace:*",
+    "@waiting-room/cli-linux-amd64": "workspace:*"
   }
 }

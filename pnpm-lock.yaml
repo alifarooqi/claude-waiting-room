@@ -12,7 +12,28 @@ importers:
         specifier: ^5.6.0
         version: 5.9.3
 
-  packages/cli: {}
+  packages/cli:
+    optionalDependencies:
+      '@waiting-room/cli-darwin-amd64':
+        specifier: workspace:*
+        version: link:../cli-darwin-amd64
+      '@waiting-room/cli-darwin-arm64':
+        specifier: workspace:*
+        version: link:../cli-darwin-arm64
+      '@waiting-room/cli-linux-amd64':
+        specifier: workspace:*
+        version: link:../cli-linux-amd64
+      '@waiting-room/cli-linux-arm64':
+        specifier: workspace:*
+        version: link:../cli-linux-arm64
+
+  packages/cli-darwin-amd64: {}
+
+  packages/cli-darwin-arm64: {}
+
+  packages/cli-linux-amd64: {}
+
+  packages/cli-linux-arm64: {}
 
   packages/exercise-math:
     devDependencies:

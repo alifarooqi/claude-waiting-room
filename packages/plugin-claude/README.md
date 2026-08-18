@@ -21,13 +21,23 @@ Each hook invokes `${CLAUDE_PLUGIN_ROOT}/bin/waiting-room emit …`, a one-shot 
 
 > The `bin/waiting-room` binary is populated by [`@waiting-room/cli`](../cli) at install time (milestone M5). For now it is absent; build the daemon from source with `make build-daemon` and place it at `daemon/bin/waiting-room`.
 
-## Install (forthcoming)
+## Install
+
+**Quick test (this repo, one session):** run Claude inside tmux with
 
 ```
-claude plugin install @waiting-room/plugin-claude
+claude --plugin-dir /path/to/claude-waiting-room/packages/plugin-claude
 ```
 
-The plugin depends on `@waiting-room/cli`, which provides the `waiting-room` binary for your platform. Then start the daemon once (`waiting-room daemon`) and run Claude inside a tmux session.
+**Persistent (zero-install):** copy the plugin folder to `~/.claude/skills/claude-waiting-room/` — it loads in every session.
+
+**Marketplace/npm (forthcoming):** `claude plugin install @waiting-room/plugin-claude`, which brings `@waiting-room/cli` and its platform binary as a dependency.
+
+### Binary resolution
+
+`bin/waiting-room` is a resolver, in order: `$WAITING_ROOM_BIN` → vendored platform binaries (`make plugin-pack` fills `bin/waiting-room-<os>-<arch>`) → a monorepo dev checkout's `daemon/bin/waiting-room` → `waiting-room` on PATH → **exit 0 fail-open** so a missing binary can never break Claude. Release packaging (`make plugin-pack`) makes the plugin fully self-contained.
+
+Start the daemon once (`waiting-room daemon`, or let an SDK activity auto-start it) and run Claude inside a tmux session — that's the whole setup.
 
 ## Safety
 

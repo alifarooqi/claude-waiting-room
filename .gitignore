@@ -8,6 +8,11 @@ daemon/bin/
 *.tsbuildinfo
 coverage/
 
+# Packed platform binaries (built via make cli-pack / plugin-pack)
+packages/plugin-claude/bin/waiting-room-*
+packages/cli-darwin-*/bin/
+packages/cli-linux-*/bin/
+
 # Waiting Room runtime
 *.sock
 .waiting-room/

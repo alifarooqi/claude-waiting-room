@@ -50,3 +50,24 @@ clean: ## Remove build artifacts
 	rm -f $(DAEMON_BIN)
 	rm -rf packages/*/dist
 	-pnpm -r run clean
+
+PLATFORMS := darwin-arm64 darwin-amd64 linux-arm64 linux-amd64
+
+.PHONY: cli-pack
+cli-pack: ## Cross-compile binaries into the @waiting-room/cli-* platform packages
+	@mkdir -p packages/plugin-claude/bin
+	@for p in $(PLATFORMS); do \
+		os=$${p%-*}; arch=$${p##*-}; \
+		echo "  building $$p"; \
+		(cd daemon && CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -trimpath \
+			-ldflags "-X main.Version=$(VERSION)" \
+			-o ../packages/cli-$$p/bin/waiting-room ./cmd/waiting-room) || exit 1; \
+	done
+	@echo "packed: $(PLATFORMS)"
+
+.PHONY: plugin-pack
+plugin-pack: cli-pack ## Vendor platform binaries into plugin-claude (self-contained plugin)
+	@for p in $(PLATFORMS); do \
+		cp packages/cli-$$p/bin/waiting-room packages/plugin-claude/bin/waiting-room-$$p || exit 1; \
+	done
+	@echo "plugin-claude is self-contained: packages/plugin-claude/bin/waiting-room-*"
