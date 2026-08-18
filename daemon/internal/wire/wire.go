@@ -71,6 +71,7 @@ type EmitMessage struct {
 	TS          time.Time      `json:"ts"`
 	TmuxPane    string         `json:"tmux_pane,omitempty"`
 	TmuxSession string         `json:"tmux_session,omitempty"`
+	TmuxSocket  string         `json:"tmux_socket,omitempty"`
 	Meta        map[string]any `json:"meta,omitempty"`
 }
 
@@ -92,6 +93,7 @@ type SubscribeMessage struct {
 	SessionID    string `json:"session_id,omitempty"`
 	ActivityID   string `json:"activity_id"`
 	ActivityPane string `json:"activity_pane,omitempty"`
+	TmuxSocket   string `json:"tmux_socket,omitempty"`
 	Title        string `json:"title,omitempty"`
 }
 
@@ -155,6 +157,27 @@ type ErrorMessage struct {
 type PingMessage struct{ Envelope }
 type PongMessage struct{ Envelope }
 
+// SessionStatus is one entry in a StatusResponseMessage.
+type SessionStatus struct {
+	SessionID       string    `json:"session_id"`
+	State           State     `json:"state"`
+	TmuxPane        string    `json:"tmux_pane,omitempty"`
+	TmuxSession     string    `json:"tmux_session,omitempty"`
+	BoundActivities []string  `json:"bound_activities,omitempty"`
+	LastEventAt     time.Time `json:"last_event_at"`
+}
+
+// StatusRequestMessage asks the daemon for its registry (used by
+// `waiting-room status`).
+type StatusRequestMessage struct{ Envelope }
+
+// StatusResponseMessage reports the daemon's session registry.
+type StatusResponseMessage struct {
+	Envelope
+	ServerVersion string          `json:"server_version,omitempty"`
+	Sessions      []SessionStatus `json:"sessions"`
+}
+
 // ---------------------------------------------------------------------------
 // Constructors for server messages
 // ---------------------------------------------------------------------------
@@ -197,6 +220,11 @@ func PongMsg() PongMessage { return PongMessage{Envelope: Env("pong")} }
 
 // ByeMsg builds a goodbye message.
 func ByeMsg(reason string) ByeMessage { return ByeMessage{Envelope: Env("bye"), Reason: reason} }
+
+// StatusRequest builds a status request.
+func StatusRequest() StatusRequestMessage {
+	return StatusRequestMessage{Envelope: Env("status_request")}
+}
 
 // ---------------------------------------------------------------------------
 // Codec: JSON-lines framing
@@ -246,6 +274,10 @@ func Decode(line []byte) (Message, error) {
 		msg = &PingMessage{}
 	case "pong":
 		msg = &PongMessage{}
+	case "status_request":
+		msg = &StatusRequestMessage{}
+	case "status":
+		msg = &StatusResponseMessage{}
 	default:
 		return nil, fmt.Errorf("%w: %q", ErrUnknownType, env.Type)
 	}

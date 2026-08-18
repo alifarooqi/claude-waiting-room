@@ -13,6 +13,7 @@ import (
 	"github.com/alifarooqi/claude-waiting-room/daemon/internal/config"
 	"github.com/alifarooqi/claude-waiting-room/daemon/internal/lifecycle"
 	"github.com/alifarooqi/claude-waiting-room/daemon/internal/server"
+	"github.com/alifarooqi/claude-waiting-room/daemon/internal/tmux"
 )
 
 // runDaemon implements `waiting-room daemon`: the long-lived IPC server.
@@ -48,7 +49,7 @@ func runDaemon(args []string) int {
 	}
 	defer lock.Close() // releases the flock
 
-	core := server.NewCore(logger)
+	core := server.NewCore(Version, logger, tmux.NewShell)
 	srv := server.New(server.Options{
 		SocketPath: cfg.SocketPath,
 		InfoPath:   cfg.InfoPath,

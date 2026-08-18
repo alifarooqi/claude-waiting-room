@@ -56,7 +56,7 @@ make integration# real-tmux integration tests (requires tmux)
 - [x] **M0** — Repo bootstrap
 - [x] **M1** — Wire + UDS server
 - [x] **M2** — Registry + bus + `emit`
-- [ ] **M3** — Tmux controller + focus
+- [x] **M3** — Tmux controller + focus
 - [ ] **M4** — SDK (TS)
 - [ ] **M5** — plugin-claude + CLI packaging
 - [ ] **M6** — Reference activities (Snake, math)

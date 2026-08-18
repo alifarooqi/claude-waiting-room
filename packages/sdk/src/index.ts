@@ -23,6 +23,9 @@ export type {
   ErrorMessage,
   PingMessage,
   PongMessage,
+  SessionStatus,
+  StatusRequestMessage,
+  StatusResponseMessage,
   ServerToClient,
   ClientToServer,
 } from './protocol.js';

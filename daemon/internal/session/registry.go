@@ -23,6 +23,9 @@ type Session struct {
 	TmuxPane string
 	// TmuxSession is the tmux session name (filled by the tmux controller in M3).
 	TmuxSession string
+	// TmuxSocket is the tmux server socket path parsed from $TMUX
+	// ("" = default server); used to scope tmux commands.
+	TmuxSocket  string
 	FirstSeenAt time.Time
 	LastEventAt time.Time
 }
@@ -90,6 +93,9 @@ func (r *Registry) Apply(m *wire.EmitMessage) Update {
 	}
 	if m.TmuxSession != "" {
 		s.TmuxSession = m.TmuxSession
+	}
+	if m.TmuxSocket != "" {
+		s.TmuxSocket = m.TmuxSocket
 	}
 	if newState != s.State {
 		s.State = newState

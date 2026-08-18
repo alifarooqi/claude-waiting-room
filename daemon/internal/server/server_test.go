@@ -8,23 +8,77 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/alifarooqi/claude-waiting-room/daemon/internal/lifecycle"
+	"github.com/alifarooqi/claude-waiting-room/daemon/internal/tmux"
 	"github.com/alifarooqi/claude-waiting-room/daemon/internal/wire"
 )
+
+// fakeTmux is an in-memory tmux.Controller for focus-logic unit tests.
+type fakeTmux struct {
+	mu      sync.Mutex
+	panes   []tmux.PaneInfo
+	focused []string
+}
+
+func (f *fakeTmux) Available() bool { return true }
+
+func (f *fakeTmux) ListPanes() ([]tmux.PaneInfo, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]tmux.PaneInfo, len(f.panes))
+	copy(out, f.panes)
+	return out, nil
+}
+
+func (f *fakeTmux) FocusPane(id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.focused = append(f.focused, id)
+	return nil
+}
+
+func (f *fakeTmux) focusLog() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.focused...)
+}
+
+func waitForFocus(t *testing.T, f *fakeTmux, want []string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if got := f.focusLog(); reflect.DeepEqual(got, want) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("focus log = %v, want %v", f.focusLog(), want)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
 
 // startTestServer boots a real daemon on a temp-dir socket and blocks until
 // it answers pings. Returns the socket path and info file path.
 func startTestServer(t *testing.T) (socketPath, infoPath string) {
+	t.Helper()
+	return startTestServerWithTmux(t, nil)
+}
+
+// startTestServerWithTmux is startTestServer with an injectable tmux factory
+// (nil = tmux disabled).
+func startTestServerWithTmux(t *testing.T, factory TmuxFactory) (socketPath, infoPath string) {
 	t.Helper()
 	dir := t.TempDir()
 	sock := filepath.Join(dir, "d.sock")
 	info := filepath.Join(dir, "daemon.info")
 	logger := log.New(io.Discard, "", 0)
 
-	core := NewCore(logger)
+	core := NewCore("test", logger, factory)
 	srv := New(Options{SocketPath: sock, InfoPath: info, Version: "test", Log: logger}, core)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -244,6 +298,55 @@ func TestInvalidModeNacked(t *testing.T) {
 	}
 }
 
+// TestFocusOnTransition: WORKING focuses the bound activity pane;
+// NEEDS_ATTENTION focuses the session's Claude pane. Binding happens by
+// window topology (fake panes share window @1).
+func TestFocusOnTransition(t *testing.T) {
+	ft := &fakeTmux{panes: []tmux.PaneInfo{
+		{ID: "%c", SessionID: "$1", SessionName: "main", WindowID: "@1", ActiveInWindow: true},
+		{ID: "%a", SessionID: "$1", SessionName: "main", WindowID: "@1"},
+	}}
+	sock, _ := startTestServerWithTmux(t, func(string) tmux.Controller { return ft })
+
+	sub := dialClient(t, sock)
+	sub.send(&wire.SubscribeMessage{
+		Envelope: wire.Env("subscribe"), Mode: "auto",
+		ActivityID: "snake", ActivityPane: "%a", TmuxSocket: "fake",
+	})
+	sub.drainUntil(2*time.Second, func(m wire.Message) bool {
+		a, ok := m.(*wire.AckMessage)
+		return ok && a.Ok
+	})
+	sub.drainUntil(2*time.Second, func(m wire.Message) bool {
+		_, ok := m.(*wire.SnapshotMessage)
+		return ok
+	})
+
+	em := dialClient(t, sock)
+	mk := func(event string, seq int64) *wire.EmitMessage {
+		return &wire.EmitMessage{
+			Envelope: wire.Env("emit"), Event: event, SessionID: "s1", Seq: seq,
+			TS: time.Now().UTC(), TmuxPane: "%c", TmuxSocket: "fake",
+		}
+	}
+
+	// Claude starts working -> daemon pushes focus to the activity pane.
+	em.send(mk(wire.EventAgentWorking, 1))
+	em.drainUntil(2*time.Second, func(m wire.Message) bool {
+		a, ok := m.(*wire.AckMessage)
+		return ok && a.Ok
+	})
+	waitForFocus(t, ft, []string{"%a"})
+
+	// Claude halts -> daemon snaps focus back to the Claude pane.
+	em.send(mk(wire.EventAgentNeedsAttention, 2))
+	em.drainUntil(2*time.Second, func(m wire.Message) bool {
+		a, ok := m.(*wire.AckMessage)
+		return ok && a.Ok
+	})
+	waitForFocus(t, ft, []string{"%a", "%c"})
+}
+
 func TestInfoFileLifecycle(t *testing.T) {
 	sock, info := startTestServer(t)
 
@@ -260,7 +363,7 @@ func TestInfoFileLifecycle(t *testing.T) {
 	sock2 := filepath.Join(dir, "d2.sock")
 	info2 := filepath.Join(dir, "daemon2.info")
 	logger := log.New(io.Discard, "", 0)
-	srv := New(Options{SocketPath: sock2, InfoPath: info2, Version: "test", Log: logger}, NewCore(logger))
+	srv := New(Options{SocketPath: sock2, InfoPath: info2, Version: "test", Log: logger}, NewCore("test", logger, nil))
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() { _ = srv.Run(ctx) }()
 

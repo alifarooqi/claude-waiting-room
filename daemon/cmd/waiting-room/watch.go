@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/alifarooqi/claude-waiting-room/daemon/internal/wire"
@@ -44,6 +45,14 @@ func runWatch(args []string) int {
 		SessionID:  sid,
 		ActivityID: fmt.Sprintf("watch-%d", os.Getpid()),
 		Title:      "watch",
+	}
+	// Behave like a real activity: report the pane we run in (if any) so
+	// the daemon can topology-bind us and refocus this pane on resume.
+	sub.ActivityPane = os.Getenv("TMUX_PANE")
+	if t := os.Getenv("TMUX"); t != "" {
+		if i := strings.IndexByte(t, ','); i > 0 {
+			sub.TmuxSocket = t[:i]
+		}
 	}
 	line, err := wire.Encode(sub)
 	if err != nil {

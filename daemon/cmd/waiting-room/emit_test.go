@@ -7,9 +7,9 @@ import (
 
 func TestSplitEmitArgs(t *testing.T) {
 	cases := []struct {
-		name string
-		in   []string
-		want string
+		name  string
+		in    []string
+		want  string
 		flags []string
 	}{
 		{

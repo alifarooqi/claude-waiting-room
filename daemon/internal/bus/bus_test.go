@@ -49,8 +49,8 @@ func TestRoutingAnyVsBound(t *testing.T) {
 	b := New()
 	bound := &collectingSink{}
 	any := &collectingSink{}
-	b.Subscribe("session", "s1", bound, nil)
-	b.Subscribe("any", "", any, nil)
+	b.Subscribe(SubOpts{Mode: "session", BoundSession: "s1", Sink: bound})
+	b.Subscribe(SubOpts{Mode: "any", Sink: any})
 
 	b.Publish("s2", wire.StateChangeMsg("s2", wire.StateWorking, wire.StateNeedsAttention, "Stop"))
 	waitFor(t, any, 1)
@@ -66,12 +66,39 @@ func TestRoutingAnyVsBound(t *testing.T) {
 func TestUnsubscribeStopsDelivery(t *testing.T) {
 	b := New()
 	sink := &collectingSink{}
-	sub := b.Subscribe("any", "", sink, nil)
+	sub := b.Subscribe(SubOpts{Mode: "any", Sink: sink})
 	b.Unsubscribe(sub)
 	b.Publish("s1", wire.StateChangeMsg("s1", wire.StateUnknown, wire.StateWorking, ""))
 	time.Sleep(50 * time.Millisecond)
 	if sink.len() != 0 {
 		t.Fatalf("unsubscribed sink still received %d messages", sink.len())
+	}
+}
+
+func TestRebind(t *testing.T) {
+	b := New()
+	sink := &collectingSink{}
+	sub := b.Subscribe(SubOpts{Mode: "auto", Sink: sink}) // unbound: follows everything
+
+	b.Publish("s1", wire.StateChangeMsg("s1", wire.StateUnknown, wire.StateWorking, ""))
+	waitFor(t, sink, 1)
+
+	// A Claude session appears in the activity's window: rebind to it.
+	b.Rebind(sub, "s1")
+	b.Publish("s2", wire.StateChangeMsg("s2", wire.StateUnknown, wire.StateWorking, ""))
+	time.Sleep(50 * time.Millisecond)
+	if got := sink.len(); got != 1 {
+		t.Fatalf("rebound sub must not hear other sessions, got %d messages", got)
+	}
+	b.Publish("s1", wire.StateChangeMsg("s1", wire.StateWorking, wire.StateNeedsAttention, ""))
+	waitFor(t, sink, 2)
+
+	// Rebind is a no-op once bound.
+	b.Rebind(sub, "s9")
+	b.Publish("s9", wire.StateChangeMsg("s9", wire.StateUnknown, wire.StateWorking, ""))
+	time.Sleep(50 * time.Millisecond)
+	if got := sink.len(); got != 2 {
+		t.Fatalf("rebind must not retarget a bound sub, got %d messages", got)
 	}
 }
 
@@ -81,10 +108,13 @@ func TestSlowConsumerGetsDroppedAndResync(t *testing.T) {
 
 	var resyncs int
 	var mu sync.Mutex
-	sub := b.Subscribe("session", "s1", sink, func(*Sub) {
-		mu.Lock()
-		resyncs++
-		mu.Unlock()
+	sub := b.Subscribe(SubOpts{
+		Mode: "session", BoundSession: "s1", Sink: sink,
+		OnResync: func(*Sub) {
+			mu.Lock()
+			resyncs++
+			mu.Unlock()
+		},
 	})
 	defer b.Unsubscribe(sub)
 

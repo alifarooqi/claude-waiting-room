@@ -38,6 +38,7 @@ export interface EmitMessage extends Envelope {
   readonly ts: string;
   readonly tmux_pane?: string;
   readonly tmux_session?: string;
+  readonly tmux_socket?: string;
   readonly meta?: {
     readonly hook?: string;
     readonly cwd?: string;
@@ -63,6 +64,7 @@ export interface SubscribeMessage extends Envelope {
   readonly session_id?: string;
   readonly activity_id: string;
   readonly activity_pane?: string;
+  readonly tmux_socket?: string;
   readonly title?: string;
 }
 
@@ -121,6 +123,28 @@ export interface PongMessage extends Envelope {
   readonly type: 'pong';
 }
 
+/** One entry in a StatusResponseMessage. */
+export interface SessionStatus {
+  readonly session_id: string;
+  readonly state: AgentState;
+  readonly tmux_pane?: string;
+  readonly tmux_session?: string;
+  readonly bound_activities?: readonly string[];
+  readonly last_event_at: string;
+}
+
+/** Asks the daemon for its session registry (used by `waiting-room status`). */
+export interface StatusRequestMessage extends Envelope {
+  readonly type: 'status_request';
+}
+
+/** Reports the daemon's session registry. */
+export interface StatusResponseMessage extends Envelope {
+  readonly type: 'status';
+  readonly server_version?: string;
+  readonly sessions: readonly SessionStatus[];
+}
+
 /** All messages a client (SDK) can receive from the daemon. */
 export type ServerToClient =
   | SnapshotMessage
@@ -130,10 +154,12 @@ export type ServerToClient =
   | HelloMessage
   | ByeMessage
   | ErrorMessage
-  | PongMessage;
+  | PongMessage
+  | StatusResponseMessage;
 
 /** All messages a client (SDK) can send to the daemon. */
 export type ClientToServer =
   | SubscribeMessage
   | UnsubscribeMessage
-  | PingMessage;
+  | PingMessage
+  | StatusRequestMessage;

@@ -106,6 +106,13 @@ func runEmit(args []string) int {
 		TmuxPane:  os.Getenv("TMUX_PANE"), // self-registers the session's pane
 		Meta:      meta,
 	}
+	// $TMUX is "<socket-path>,<pid>" — parse the socket so the daemon can
+	// scope its tmux commands to the right server (tests, power users).
+	if t := os.Getenv("TMUX"); t != "" {
+		if i := strings.IndexByte(t, ','); i > 0 {
+			msg.TmuxSocket = t[:i]
+		}
+	}
 
 	socketPath := discoverSocket()
 	if !sendEmit(socketPath, msg) {

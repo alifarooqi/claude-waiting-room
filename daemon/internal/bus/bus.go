@@ -29,6 +29,13 @@ type Sub struct {
 	// BoundSession is the resolved session id this subscription follows.
 	// Empty means "follow everything" (unbound auto, or explicit any).
 	BoundSession string
+	// ActivityPane is the tmux pane the activity runs in (used by the
+	// daemon to refocus the activity when Claude resumes working).
+	ActivityPane string
+	// ActivityID identifies the activity (for status output).
+	ActivityID string
+	// Title is the activity's human label.
+	Title string
 
 	ch       chan any
 	overflow atomic.Bool
@@ -36,6 +43,17 @@ type Sub struct {
 	done     chan struct{}
 	onResync func(*Sub)
 	stopOnce sync.Once
+}
+
+// SubOpts configures Subscribe.
+type SubOpts struct {
+	Mode         string
+	BoundSession string
+	ActivityPane string
+	ActivityID   string
+	Title        string
+	Sink         Sink
+	OnResync     func(*Sub)
 }
 
 // matches reports whether a state change for sessionID should reach this sub.
@@ -58,22 +76,42 @@ func New() *Bus {
 }
 
 // Subscribe registers a subscription and starts its pump goroutine, which
-// drains the buffer and writes to the sink. onResync (optional) is invoked
+// drains the buffer and writes to the sink. OnResync (optional) is invoked
 // after events were dropped so the caller can push a fresh snapshot.
-func (b *Bus) Subscribe(mode, boundSession string, sink Sink, onResync func(*Sub)) *Sub {
+func (b *Bus) Subscribe(o SubOpts) *Sub {
 	s := &Sub{
-		Mode:         mode,
-		BoundSession: boundSession,
+		Mode:         o.Mode,
+		BoundSession: o.BoundSession,
+		ActivityPane: o.ActivityPane,
+		ActivityID:   o.ActivityID,
+		Title:        o.Title,
 		ch:           make(chan any, subBufferSize),
-		sink:         sink,
+		sink:         o.Sink,
 		done:         make(chan struct{}),
-		onResync:     onResync,
+		onResync:     o.OnResync,
 	}
 	b.mu.Lock()
 	b.subs[s] = struct{}{}
 	b.mu.Unlock()
 	go s.pump()
 	return s
+}
+
+// Rebind retargets an unbound "auto" subscription at a concrete session
+// (e.g. a Claude session appearing in the activity's window after the
+// activity subscribed). No-op when the sub is already bound.
+func (b *Bus) Rebind(s *Sub, sessionID string) {
+	if s == nil {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if _, ok := b.subs[s]; !ok {
+		return
+	}
+	if s.BoundSession == "" {
+		s.BoundSession = sessionID
+	}
 }
 
 // Unsubscribe removes a subscription and stops its pump.

@@ -37,18 +37,12 @@ func main() {
 	case "watch":
 		os.Exit(runWatch(os.Args[2:]))
 	case "status":
-		notImplemented("status", "M3")
+		os.Exit(runStatus(os.Args[2:]))
 	default:
 		fmt.Fprintf(os.Stderr, "waiting-room: unknown command %q\n", os.Args[1])
 		usage(os.Stderr)
 		os.Exit(2)
 	}
-}
-
-// notImplemented reports a stub command and exits non-zero.
-func notImplemented(cmd, milestone string) {
-	fmt.Fprintf(os.Stderr, "waiting-room: %q is not implemented yet (milestone %s)\n", cmd, milestone)
-	os.Exit(1)
 }
 
 func usage(w *os.File) {
