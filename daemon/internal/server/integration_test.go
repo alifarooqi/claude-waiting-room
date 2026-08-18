@@ -96,7 +96,9 @@ func (h *tmuxHarness) focusedPane(t *testing.T) string {
 
 func waitFocused(t *testing.T, h *tmuxHarness, want string) {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
+	// Generous deadline: CI runners (especially macOS) can be slow, and the
+	// daemon focuses asynchronously via several tmux execs.
+	deadline := time.Now().Add(10 * time.Second)
 	for {
 		if got := h.focusedPane(t); got == want {
 			return

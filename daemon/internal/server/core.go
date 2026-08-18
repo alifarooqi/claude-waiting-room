@@ -32,6 +32,12 @@ type Core struct {
 
 	mu   sync.Mutex
 	subs map[bus.Sink]*bus.Sub
+
+	// focusMu serializes tmux focus operations. applyFocus re-reads the
+	// session state under this lock so a stale transition (e.g. a Stop
+	// racing an immediate UserPromptSubmit) can never override a newer
+	// focus — last state wins, regardless of goroutine scheduling.
+	focusMu sync.Mutex
 }
 
 // NewCore creates a handler. Pass a nil factory to run without tmux.
@@ -283,8 +289,14 @@ func (c *Core) applyFocus(sessionID string, to wire.State) {
 	if c.factory == nil {
 		return
 	}
+
+	c.focusMu.Lock()
+	defer c.focusMu.Unlock()
+
+	// Re-read under the lock: if a newer transition already changed the
+	// state, this focus is stale — let the newer one win.
 	s, ok := c.reg.Get(sessionID)
-	if !ok {
+	if !ok || s.State != to {
 		return
 	}
 
