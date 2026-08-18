@@ -57,7 +57,7 @@ make integration# real-tmux integration tests (requires tmux)
 - [x] **M1** — Wire + UDS server
 - [x] **M2** — Registry + bus + `emit`
 - [x] **M3** — Tmux controller + focus
-- [ ] **M4** — SDK (TS)
+- [x] **M4** — SDK (TS)
 - [ ] **M5** — plugin-claude + CLI packaging
 - [ ] **M6** — Reference activities (Snake, math)
 - [ ] **M7** — Hardening + v1 release

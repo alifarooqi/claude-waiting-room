@@ -123,6 +123,12 @@ export interface PongMessage extends Envelope {
   readonly type: 'pong';
 }
 
+/** Asks the daemon to imperatively focus the bound session's Claude pane
+ *  (used by an activity quitting, or focusAgentTerminal()). */
+export interface FocusRequestMessage extends Envelope {
+  readonly type: 'focus_request';
+}
+
 /** One entry in a StatusResponseMessage. */
 export interface SessionStatus {
   readonly session_id: string;
@@ -162,4 +168,5 @@ export type ClientToServer =
   | SubscribeMessage
   | UnsubscribeMessage
   | PingMessage
+  | FocusRequestMessage
   | StatusRequestMessage;

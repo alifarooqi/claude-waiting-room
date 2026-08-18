@@ -19,22 +19,31 @@ type Config struct {
 
 // Default resolves paths from the environment:
 //
+//	Base dir:   $WAITING_ROOM_HOME, else ~/.waiting-room
 //	SocketPath: $WAITING_ROOM_SOCKET, else
 //	            $XDG_RUNTIME_DIR/waiting-room/daemon.sock, else
-//	            ~/.waiting-room/run/waiting-room/daemon.sock   (macOS lacks XDG_RUNTIME_DIR)
-//	InfoPath:   ~/.waiting-room/daemon.info   (always fixed so clients can find it)
-//	LockPath:   ~/.waiting-room/daemon.lock
+//	            <base>/run/waiting-room/daemon.sock   (macOS lacks XDG_RUNTIME_DIR)
+//	InfoPath:   <base>/daemon.info   (fixed so clients can find it)
+//	LockPath:   <base>/daemon.lock
+//
+// WAITING_ROOM_HOME lets tests and multi-instance setups fully isolate
+// socket, info, and lock state.
 func Default() (Config, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return Config{}, err
+	base := os.Getenv("WAITING_ROOM_HOME")
+	if base == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return Config{}, err
+		}
+		base = filepath.Join(home, ".waiting-room")
 	}
-	base := filepath.Join(home, ".waiting-room")
 
 	socket := os.Getenv("WAITING_ROOM_SOCKET")
 	if socket == "" {
 		runtimeDir := os.Getenv("XDG_RUNTIME_DIR")
-		if runtimeDir == "" {
+		if runtimeDir == "" || os.Getenv("WAITING_ROOM_HOME") != "" {
+			// No XDG dir (macOS), or full isolation requested: keep the
+			// socket under the base dir.
 			runtimeDir = filepath.Join(base, "run")
 		}
 		socket = filepath.Join(runtimeDir, "waiting-room", "daemon.sock")

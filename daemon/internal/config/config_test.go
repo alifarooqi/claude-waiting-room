@@ -20,6 +20,7 @@ func TestSocketEnvOverrideWins(t *testing.T) {
 func TestXDGRuntimeDirUsed(t *testing.T) {
 	t.Setenv("WAITING_ROOM_SOCKET", "")
 	t.Setenv("XDG_RUNTIME_DIR", "/run/user/1000")
+	t.Setenv("WAITING_ROOM_HOME", "")
 	t.Setenv("HOME", "/tmp/fakehome")
 	cfg, err := Default()
 	if err != nil {
@@ -34,6 +35,7 @@ func TestXDGRuntimeDirUsed(t *testing.T) {
 func TestFallsBackToHomeRunDir(t *testing.T) {
 	t.Setenv("WAITING_ROOM_SOCKET", "")
 	t.Setenv("XDG_RUNTIME_DIR", "")
+	t.Setenv("WAITING_ROOM_HOME", "")
 	t.Setenv("HOME", "/tmp/fakehome")
 	cfg, err := Default()
 	if err != nil {
@@ -45,5 +47,25 @@ func TestFallsBackToHomeRunDir(t *testing.T) {
 	}
 	if cfg.InfoPath != filepath.Join("/tmp/fakehome", ".waiting-room", "daemon.info") {
 		t.Fatalf("InfoPath = %q", cfg.InfoPath)
+	}
+}
+
+func TestWaitingRoomHomeIsolatesEverything(t *testing.T) {
+	t.Setenv("WAITING_ROOM_SOCKET", "")
+	t.Setenv("XDG_RUNTIME_DIR", "/run/user/1000") // must be ignored under WAITING_ROOM_HOME
+	t.Setenv("WAITING_ROOM_HOME", "/tmp/wrhome")
+	t.Setenv("HOME", "/tmp/fakehome")
+	cfg, err := Default()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.SocketPath != filepath.Join("/tmp/wrhome", "run", "waiting-room", "daemon.sock") {
+		t.Fatalf("SocketPath = %q", cfg.SocketPath)
+	}
+	if cfg.InfoPath != filepath.Join("/tmp/wrhome", "daemon.info") {
+		t.Fatalf("InfoPath = %q", cfg.InfoPath)
+	}
+	if cfg.LockPath != filepath.Join("/tmp/wrhome", "daemon.lock") {
+		t.Fatalf("LockPath = %q", cfg.LockPath)
 	}
 }

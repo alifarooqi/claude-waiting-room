@@ -66,6 +66,8 @@ func (c *Core) Handle(sink bus.Sink, msg wire.Message) {
 		c.handleUnsubscribe(sink)
 	case *wire.StatusRequestMessage:
 		c.handleStatus(sink)
+	case *wire.FocusRequestMessage:
+		c.handleFocusRequest(sink)
 	case *wire.PingMessage:
 		_ = sink.Send(wire.PongMsg())
 	default:
@@ -309,10 +311,36 @@ func (c *Core) applyFocus(sessionID string, to wire.State) {
 	default:
 		return
 	}
+	c.focusPaneLocked(&s, pane)
+}
+
+// handleFocusRequest imperatively focuses the requester's bound session's
+// Claude pane (SDK focusAgentTerminal / activity quitting).
+func (c *Core) handleFocusRequest(sink bus.Sink) {
+	c.mu.Lock()
+	sub := c.subs[sink]
+	c.mu.Unlock()
+	if sub == nil || sub.BoundSession == "" {
+		_ = sink.Send(wire.Ack(false, "not bound to a session"))
+		return
+	}
+	if c.factory != nil {
+		go func() {
+			c.focusMu.Lock()
+			defer c.focusMu.Unlock()
+			if s, ok := c.reg.Get(sub.BoundSession); ok {
+				c.focusPaneLocked(&s, s.TmuxPane)
+			}
+		}()
+	}
+	_ = sink.Send(wire.Ack(true, ""))
+}
+
+// focusPaneLocked runs the tmux focus for pane. Caller must hold focusMu.
+func (c *Core) focusPaneLocked(s *session.Session, pane string) {
 	if pane == "" {
 		return
 	}
-
 	ctrl := c.factory(s.TmuxSocket)
 	if ctrl == nil || !ctrl.Available() {
 		c.log.Printf("focus skipped: tmux unavailable")
@@ -321,7 +349,7 @@ func (c *Core) applyFocus(sessionID string, to wire.State) {
 	if err := ctrl.FocusPane(pane); err != nil {
 		c.log.Printf("focus pane %s: %v", pane, err)
 	} else {
-		c.log.Printf("focus %s -> %s", to, pane)
+		c.log.Printf("focus -> %s", pane)
 	}
 }
 

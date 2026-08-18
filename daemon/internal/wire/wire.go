@@ -157,6 +157,11 @@ type ErrorMessage struct {
 type PingMessage struct{ Envelope }
 type PongMessage struct{ Envelope }
 
+// FocusRequestMessage asks the daemon to imperatively focus the bound
+// session's Claude pane (used by an activity quitting, or the SDK's
+// focusAgentTerminal()).
+type FocusRequestMessage struct{ Envelope }
+
 // SessionStatus is one entry in a StatusResponseMessage.
 type SessionStatus struct {
 	SessionID       string    `json:"session_id"`
@@ -218,6 +223,9 @@ func PingMsg() PingMessage { return PingMessage{Envelope: Env("ping")} }
 // PongMsg builds a liveness reply.
 func PongMsg() PongMessage { return PongMessage{Envelope: Env("pong")} }
 
+// FocusRequest builds an imperative focus request.
+func FocusRequest() FocusRequestMessage { return FocusRequestMessage{Envelope: Env("focus_request")} }
+
 // ByeMsg builds a goodbye message.
 func ByeMsg(reason string) ByeMessage { return ByeMessage{Envelope: Env("bye"), Reason: reason} }
 
@@ -274,6 +282,8 @@ func Decode(line []byte) (Message, error) {
 		msg = &PingMessage{}
 	case "pong":
 		msg = &PongMessage{}
+	case "focus_request":
+		msg = &FocusRequestMessage{}
 	case "status_request":
 		msg = &StatusRequestMessage{}
 	case "status":

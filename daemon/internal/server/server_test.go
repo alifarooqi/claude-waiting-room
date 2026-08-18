@@ -347,6 +347,49 @@ func TestFocusOnTransition(t *testing.T) {
 	waitForFocus(t, ft, []string{"%a", "%c"})
 }
 
+// TestFocusRequest: the SDK's imperative focusAgentTerminal focuses the
+// bound session's Claude pane without waiting for a state change.
+func TestFocusRequest(t *testing.T) {
+	ft := &fakeTmux{panes: []tmux.PaneInfo{
+		{ID: "%c", SessionID: "$1", SessionName: "main", WindowID: "@1", ActiveInWindow: true},
+		{ID: "%a", SessionID: "$1", SessionName: "main", WindowID: "@1"},
+	}}
+	sock, _ := startTestServerWithTmux(t, func(string) tmux.Controller { return ft })
+
+	sub := dialClient(t, sock)
+	sub.send(&wire.SubscribeMessage{
+		Envelope: wire.Env("subscribe"), Mode: "auto",
+		ActivityID: "snake", ActivityPane: "%a", TmuxSocket: "fake",
+	})
+	sub.drainUntil(2*time.Second, func(m wire.Message) bool {
+		a, ok := m.(*wire.AckMessage)
+		return ok && a.Ok
+	})
+	sub.drainUntil(2*time.Second, func(m wire.Message) bool {
+		_, ok := m.(*wire.SnapshotMessage)
+		return ok
+	})
+
+	em := dialClient(t, sock)
+	em.send(&wire.EmitMessage{
+		Envelope: wire.Env("emit"), Event: wire.EventAgentWorking, SessionID: "s1",
+		Seq: 1, TS: time.Now().UTC(), TmuxPane: "%c", TmuxSocket: "fake",
+	})
+	em.drainUntil(2*time.Second, func(m wire.Message) bool {
+		a, ok := m.(*wire.AckMessage)
+		return ok && a.Ok
+	})
+	waitForFocus(t, ft, []string{"%a"})
+
+	// Imperative focus from the activity's own connection.
+	sub.send(wire.FocusRequest())
+	sub.drainUntil(2*time.Second, func(m wire.Message) bool {
+		a, ok := m.(*wire.AckMessage)
+		return ok && a.Ok
+	})
+	waitForFocus(t, ft, []string{"%a", "%c"})
+}
+
 func TestInfoFileLifecycle(t *testing.T) {
 	sock, info := startTestServer(t)
 

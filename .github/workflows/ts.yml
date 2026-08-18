@@ -13,11 +13,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'pnpm'
+      # Build the daemon binary so the SDK's ensureDaemon test can run.
+      - name: Build daemon binary
+        run: cd daemon && CGO_ENABLED=0 go build -trimpath -o bin/waiting-room ./cmd/waiting-room
       - run: pnpm install --frozen-lockfile
       - run: pnpm -r run build
       - run: pnpm -r run lint
+      - run: pnpm -r run test
