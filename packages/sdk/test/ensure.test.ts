@@ -25,13 +25,28 @@ describe.skipIf(!hasBin)('ensureDaemon (real binary)', () => {
   });
 
   afterAll(async () => {
-    // Graceful-stop the spawned daemon via its info file, then restore env.
+    // Stop the spawned daemon via its info file and PROVE it died before
+    // deleting the dir — a leaked daemon would hold the lock and advertise
+    // a dead socket in global state (this exact bug shipped once).
     try {
       const info = JSON.parse(readFileSync(join(dir, 'daemon.info'), 'utf8')) as { pid: number };
       process.kill(info.pid, 'SIGTERM');
-      await new Promise((r) => setTimeout(r, 400));
+      const deadline = Date.now() + 3000;
+      while (Date.now() < deadline) {
+        try {
+          process.kill(info.pid, 0); // liveness probe
+          await new Promise((r) => setTimeout(r, 100));
+        } catch {
+          break; // gone
+        }
+      }
+      try {
+        process.kill(info.pid, 'SIGKILL'); // belt and braces (no-op if gone)
+      } catch {
+        // already dead
+      }
     } catch {
-      // already gone
+      // info file absent: daemon never started or already cleaned up
     }
     for (const [k, v] of Object.entries(savedEnv)) {
       if (v === undefined) delete process.env[k];
@@ -44,5 +59,9 @@ describe.skipIf(!hasBin)('ensureDaemon (real binary)', () => {
     expect(await daemonAlive(sockPath)).toBe(false);
     expect(await ensureDaemon(sockPath, { spawnEnabled: true, waitMs: 5000 })).toBe(true);
     expect(await daemonAlive(sockPath)).toBe(true);
+    // The spawned daemon must honor our isolation: its info file lives in
+    // our temp home, never in the user's ~/.waiting-room.
+    const info = JSON.parse(readFileSync(join(dir, 'daemon.info'), 'utf8')) as { socket_path: string };
+    expect(info.socket_path).toBe(sockPath);
   }, 10000);
 });

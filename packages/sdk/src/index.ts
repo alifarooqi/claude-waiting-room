@@ -41,4 +41,4 @@ export type { Activity, ActivityOptions, StateChangeInfo } from './activity.js';
 export { IpcClient } from './client.js';
 export type { ConnectionStatus, IpcClientOptions } from './client.js';
 
-export { resolveSocketPath } from './discover.js';
+export { socketCandidates, defaultSocketPath, infoFilePath } from './discover.js';

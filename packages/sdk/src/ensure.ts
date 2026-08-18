@@ -38,8 +38,10 @@ export function daemonAlive(socketPath: string, timeoutMs = 400): Promise<boolea
   });
 }
 
-/** Spawn the daemon detached. Resolves true if the process actually started. */
-export function spawnDaemon(): Promise<boolean> {
+/** Spawn the daemon detached, pinned to socketPath so it always lands
+ *  exactly where we'll look for it (its daemon.info then advertises that
+ *  socket for every other client). Resolves true if it actually started. */
+export function spawnDaemon(socketPath: string): Promise<boolean> {
   return new Promise((resolve) => {
     let settled = false;
     const done = (ok: boolean) => {
@@ -51,6 +53,7 @@ export function spawnDaemon(): Promise<boolean> {
       const child = spawn(daemonBinary(), ['daemon'], {
         detached: true,
         stdio: 'ignore',
+        env: { ...process.env, WAITING_ROOM_SOCKET: socketPath },
       });
       child.once('error', () => done(false)); // e.g. ENOENT: binary missing
       child.once('spawn', () => {
@@ -70,7 +73,7 @@ export async function ensureDaemon(
 ): Promise<boolean> {
   if (await daemonAlive(socketPath)) return true;
   if (!opts.spawnEnabled) return false;
-  if (!(await spawnDaemon())) return false;
+  if (!(await spawnDaemon(socketPath))) return false;
   const deadline = Date.now() + (opts.waitMs ?? 3000);
   while (Date.now() < deadline) {
     await sleep(150);

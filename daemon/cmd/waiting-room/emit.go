@@ -132,7 +132,8 @@ func runEmit(args []string) int {
 }
 
 // discoverSocket resolves the daemon socket: $WAITING_ROOM_SOCKET, then the
-// info file, then the default path.
+// info file (validated — a crashed or leaked daemon can leave a stale entry
+// pointing at a dead socket), then the default path.
 func discoverSocket() string {
 	if p := os.Getenv("WAITING_ROOM_SOCKET"); p != "" {
 		return p
@@ -142,7 +143,11 @@ func discoverSocket() string {
 		return ""
 	}
 	if in, err := lifecycle.ReadInfo(cfg.InfoPath); err == nil && in.SocketPath != "" {
-		return in.SocketPath
+		if lifecycle.DaemonAlive(in.SocketPath, 300*time.Millisecond) {
+			return in.SocketPath
+		}
+		// Stale info: the advertised daemon is gone. Fall through to the
+		// default path rather than chasing a dead socket forever.
 	}
 	return cfg.SocketPath
 }

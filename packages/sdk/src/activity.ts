@@ -6,7 +6,7 @@
 import { randomUUID } from 'node:crypto';
 import { IpcClient } from './client.js';
 import { daemonAlive, ensureDaemon } from './ensure.js';
-import { resolveSocketPath } from './discover.js';
+import { socketCandidates } from './discover.js';
 import {
   PROTOCOL_VERSION,
   type AgentState,
@@ -66,7 +66,17 @@ export async function createActivity(options: ActivityOptions = {}): Promise<Act
   const spawnEnabled =
     options.spawnDaemon ?? process.env['WAITING_ROOM_NO_SPAWN'] !== '1';
 
-  const socketPath = resolveSocketPath();
+  // Probe candidates; a dead advertised socket is stale info — never spawn
+  // onto it, fall back to the default path.
+  const candidates = socketCandidates();
+  let socketPath = candidates[candidates.length - 1]!;
+  for (const candidate of candidates) {
+    if (await daemonAlive(candidate, 300)) {
+      socketPath = candidate;
+      break;
+    }
+  }
+
   const alive = await ensureDaemon(socketPath, { spawnEnabled });
   if (!alive) return degradedActivity();
 

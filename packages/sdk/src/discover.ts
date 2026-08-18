@@ -31,15 +31,21 @@ export function defaultSocketPath(): string {
   return join(runtimeDir, 'waiting-room', 'daemon.sock');
 }
 
-/** Resolve the daemon socket path (env override > info file > default). */
-export function resolveSocketPath(): string {
+/**
+ * Candidate socket paths, most-specific first:
+ * $WAITING_ROOM_SOCKET (authoritative), else the info file's advertised
+ * socket, else the default path. Callers should probe each and treat a
+ * dead advertised socket as stale (fall back to the default).
+ */
+export function socketCandidates(): [string] | [string, string] {
   const fromEnv = process.env['WAITING_ROOM_SOCKET'];
-  if (fromEnv) return fromEnv;
+  if (fromEnv) return [fromEnv];
+  const def = defaultSocketPath();
   try {
     const info = JSON.parse(readFileSync(infoFilePath(), 'utf8')) as DaemonInfo;
-    if (info.socket_path) return info.socket_path;
+    if (info.socket_path && info.socket_path !== def) return [info.socket_path, def];
   } catch {
-    // Absent or corrupt info file: fall through to the default path.
+    // Absent or corrupt info file: default only.
   }
-  return defaultSocketPath();
+  return [def];
 }
