@@ -72,7 +72,7 @@ Submit a prompt in Claude → focus jumps to your activity pane; Claude stops or
 - [x] **M3** — Tmux controller + focus
 - [x] **M4** — SDK (TS)
 - [x] **M5** — plugin-claude + CLI packaging
-- [ ] **M6** — Reference activities (Snake, math)
+- [x] **M6** — Reference activities (Snake, math)
 - [ ] **M7** — Hardening + v1 release
 
 ## License

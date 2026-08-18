@@ -5,14 +5,27 @@
   "description": "Multiple-choice math quiz — a Waiting Room reference activity.",
   "license": "MIT",
   "type": "module",
+  "bin": {
+    "waiting-room-math": "./dist/index.js"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
     "lint": "tsc --noEmit -p tsconfig.json",
-    "test": "echo \"no tests yet\"",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "clean": "rm -rf dist"
   },
+  "dependencies": {
+    "@waiting-room/sdk": "workspace:*",
+    "ink": "^5.1.0",
+    "react": "^18.3.1"
+  },
   "devDependencies": {
+    "@types/node": "^22",
+    "@types/react": "^18.3.0",
     "@waiting-room/tsconfig": "workspace:*",
-    "typescript": "^5.6.0"
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
   }
 }
