@@ -68,6 +68,20 @@ describe('activity (live daemon)', () => {
     await wr.dispose();
   }, 5000);
 
+  it('holds a healthy connection (no connect-timeout leak)', async () => {
+    // Regression: the connect-timeout timer was never cleared on connect,
+    // murdering every healthy connection after 1.5s. Stay connected well
+    // past 2x that window with zero disconnects.
+    const wr = await createActivity({ session: 'any', title: 'Steady Test' });
+    await mock.waitFor((m) => m.type === 'subscribe' && m['title'] === 'Steady Test');
+    let disconnects = 0;
+    wr.onDisconnect(() => disconnects++);
+    await new Promise((r) => setTimeout(r, 3500));
+    expect(disconnects).toBe(0);
+    expect(wr.state).toBe('unknown');
+    await wr.dispose();
+  }, 8000);
+
   it('reconnects after the daemon restarts and re-syncs', async () => {
     const wr = await createActivity({ session: 'any', title: 'Reconnect Test' });
     // Wait for THIS activity's subscribe (title-scoped) so we know the

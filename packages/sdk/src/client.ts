@@ -98,6 +98,7 @@ export class IpcClient {
       const timer = setTimeout(() => finish(), CONNECT_TIMEOUT_MS);
 
       sock.on('connect', () => {
+        clearTimeout(timer); // connected: the connect-timeout must not fire
         established = true;
         this.everConnected = true;
         this.backoffMs = 100; // healthy connection: reset backoff
