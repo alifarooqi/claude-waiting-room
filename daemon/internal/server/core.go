@@ -55,6 +55,11 @@ func NewCore(version string, logger *log.Logger, factory TmuxFactory) *Core {
 	}
 }
 
+// Accessors for the janitor and other internal collaborators.
+func (c *Core) Registry() *session.Registry { return c.reg }
+func (c *Core) Bus() *bus.Bus               { return c.bus }
+func (c *Core) Factory() TmuxFactory        { return c.factory }
+
 // Handle dispatches one decoded client message.
 func (c *Core) Handle(sink bus.Sink, msg wire.Message) {
 	switch m := msg.(type) {

@@ -64,6 +64,18 @@ claude --plugin-dir packages/plugin-claude
 
 Submit a prompt in Claude → focus jumps to your activity pane; Claude stops or asks permission → focus snaps back. See [`packages/plugin-claude`](packages/plugin-claude).
 
+## Write your own activity
+
+See [`examples/writing-an-activity.md`](examples/writing-an-activity.md) for a minimal example and the design rules (don't throw on disconnect, retain last-known state across reconnects, hand focus back on quit).
+
+## Security
+
+See [`docs/security-uds.md`](docs/security-uds.md) for the threat model, the peer-credential check, permissions, and the documented v1 limitations (multi-user hosts are out of scope).
+
+## Architecture
+
+See [`docs/architecture.md`](docs/architecture.md) and the [ADR set](docs/adr/) for the design choices (polyglot monorepo, JSON-lines wire, tmux focus, zero external Go dependencies, …).
+
 ## Roadmap
 
 - [x] **M0** — Repo bootstrap
@@ -73,7 +85,7 @@ Submit a prompt in Claude → focus jumps to your activity pane; Claude stops or
 - [x] **M4** — SDK (TS)
 - [x] **M5** — plugin-claude + CLI packaging
 - [x] **M6** — Reference activities (Snake, math)
-- [ ] **M7** — Hardening + v1 release
+- [x] **M7** — Hardening + v1 release
 
 ## License
 

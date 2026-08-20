@@ -42,6 +42,17 @@ func (f *fakeTmux) FocusPane(id string) error {
 	return nil
 }
 
+func (f *fakeTmux) PaneExists(id string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, p := range f.panes {
+		if p.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
 func (f *fakeTmux) focusLog() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()

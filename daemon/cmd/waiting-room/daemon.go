@@ -23,6 +23,8 @@ import (
 func runDaemon(args []string) int {
 	fs := flag.NewFlagSet("daemon", flag.ContinueOnError)
 	socket := fs.String("socket", "", "socket path override")
+	noJanitor := false
+	fs.BoolVar(&noJanitor, "no-janitor", false, "disable the background GC sweep")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -59,6 +61,16 @@ func runDaemon(args []string) int {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	// Background GC sweeps: reap sessions whose Claude pane is gone and
+	// whose activity has been idle for > idleLimit. Can be disabled with
+	// --no-janitor (useful for tests / one-off daemons).
+	if !noJanitor {
+		j := server.NewJanitor(core.Registry(), core.Bus(), core.Factory())
+		j.SetLogging(logger)
+		go j.Run(ctx)
+		logger.Printf("janitor: sweeping every 60s, idle limit 5m")
+	}
 
 	fmt.Printf("waiting-room daemon %s\n  socket: %s\n  info:   %s\n", Version, cfg.SocketPath, cfg.InfoPath)
 	if err := srv.Run(ctx); err != nil {

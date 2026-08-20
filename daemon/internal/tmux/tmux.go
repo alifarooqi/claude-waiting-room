@@ -34,6 +34,8 @@ type Controller interface {
 	// FocusPane makes paneID the active pane (switching window first if
 	// needed — select-pane alone only works within the current window).
 	FocusPane(paneID string) error
+	// PaneExists reports whether paneID is present on the tmux server.
+	PaneExists(paneID string) bool
 }
 
 // Shell is the production Controller: it shells out to tmux, scoped to an
@@ -118,4 +120,19 @@ func (s *Shell) FocusPane(paneID string) error {
 		return err
 	}
 	return fmt.Errorf("tmux: pane %s not found", paneID)
+}
+
+// PaneExists reports whether paneID is on the tmux server. Caches no
+// result — callers (the janitor) drive the cadence.
+func (s *Shell) PaneExists(paneID string) bool {
+	panes, err := s.ListPanes()
+	if err != nil {
+		return false
+	}
+	for _, p := range panes {
+		if p.ID == paneID {
+			return true
+		}
+	}
+	return false
 }
