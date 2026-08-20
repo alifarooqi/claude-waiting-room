@@ -10,6 +10,8 @@ import { render as inkRender } from 'ink';
 export interface TestRender {
   /** Last write that contained visible content (skips bare ANSI escapes). */
   lastFrame(): string;
+  /** The mock stdin: write() emits keypress data to the app. */
+  stdin: { write(data: string | Buffer): void };
   unmount(): void;
 }
 
@@ -31,6 +33,9 @@ export function renderForTest(element: React.ReactElement): TestRender {
   stdout.cursorTo = () => {};
   stdout.moveCursor = () => {};
 
+  // Mock stdin as a READABLE stream: ink's App bridges 'readable'/read()
+  // into its internal 'input' events (it does not listen for 'data').
+  const pending: Array<string | Buffer> = [];
   const stdin = new EventEmitter() as unknown as Record<string, unknown> & {
     write(d: string | Buffer): void;
   };
@@ -41,7 +46,11 @@ export function renderForTest(element: React.ReactElement): TestRender {
   stdin.unref = () => {};
   stdin.resume = () => {};
   stdin.pause = () => {};
-  stdin.write = (d: string | Buffer) => stdin.emit('data', d);
+  stdin.read = () => (pending.length > 0 ? pending.shift()! : null);
+  stdin.write = (d: string | Buffer) => {
+    pending.push(d);
+    stdin.emit('readable');
+  };
 
   const instance = inkRender(element, {
     stdin: stdin as unknown as NodeJS.ReadStream,
@@ -59,6 +68,7 @@ export function renderForTest(element: React.ReactElement): TestRender {
       }
       return '';
     },
+    stdin: stdin as unknown as { write(data: string | Buffer): void },
     unmount: () => {
       instance.unmount();
       instance.cleanup();

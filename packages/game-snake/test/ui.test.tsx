@@ -5,24 +5,42 @@ import { fakeActivity } from './fake-activity.js';
 import { renderForTest } from './ink-render.js';
 
 describe('snake UI', () => {
-  it('renders the board and score', async () => {
+  it('renders the board, score, and a visible playfield boundary', async () => {
     const act = fakeActivity();
     const { lastFrame, unmount } = renderForTest(<App activity={act} />);
     await whenReady(act, lastFrame);
     expect(lastFrame()).toContain('snake');
+    expect(lastFrame()).toContain('score');
     unmount();
   }, 5000);
 
-  it('shows the pause overlay when Claude needs attention', async () => {
+  it('shows an explicit banner when Claude needs attention', async () => {
     const act = fakeActivity();
     const { lastFrame, unmount } = renderForTest(<App activity={act} />);
     await whenReady(act, lastFrame);
 
     act._pause();
-    await waitFor(() => expect(lastFrame()).toContain('PAUSED'));
+    await waitFor(() => {
+      expect(lastFrame()).toContain('PAUSED — CLAUDE NEEDS YOU');
+      expect(lastFrame()).toContain('waiting for your input');
+    });
 
     act._resume();
     await waitFor(() => expect(lastFrame()).not.toContain('PAUSED'));
+    unmount();
+  }, 5000);
+
+  it('p toggles manual pause independent of Claude', async () => {
+    const act = fakeActivity();
+    const { lastFrame, stdin, unmount } = renderForTest(<App activity={act} />);
+    await whenReady(act, lastFrame);
+
+    stdin.write('p');
+    await waitFor(() => expect(lastFrame()).toContain('press p to resume'));
+    expect(lastFrame()).not.toContain('CLAUDE NEEDS YOU');
+
+    stdin.write('p');
+    await waitFor(() => expect(lastFrame()).not.toContain('press p to resume'));
     unmount();
   }, 5000);
 

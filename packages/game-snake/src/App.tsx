@@ -38,12 +38,14 @@ function renderBoard(game: GameState): string[] {
 export function App({ activity }: { activity: Activity }) {
   const { exit } = useApp();
   const [game, setGame] = useState<GameState>(createInitialState);
-  const [paused, setPaused] = useState(activity.state === 'needs_attention');
+  const [autoPaused, setAutoPaused] = useState(activity.state === 'needs_attention');
+  const [manualPaused, setManualPaused] = useState(false);
   const [offline, setOffline] = useState(false);
+  const paused = autoPaused || manualPaused;
 
   useEffect(() => {
-    activity.onPause(() => setPaused(true));
-    activity.onResume(() => setPaused(false));
+    activity.onPause(() => setAutoPaused(true));
+    activity.onResume(() => setAutoPaused(false));
     activity.onDisconnect(() => setOffline(true));
   }, [activity]);
 
@@ -57,6 +59,10 @@ export function App({ activity }: { activity: Activity }) {
     if (input === 'q' || input === 'Q') {
       // Hand focus back to Claude on the way out.
       void activity.focusAgentTerminal().finally(() => exit());
+      return;
+    }
+    if (input === 'p' || input === 'P') {
+      setManualPaused((m) => !m);
       return;
     }
     if (game.gameOver && key.return) {
@@ -77,13 +83,31 @@ export function App({ activity }: { activity: Activity }) {
       <Text>
         snake — score <Text bold>{game.score}</Text>
       </Text>
-      {renderBoard(game).map((row, i) => (
-        <Text key={i}>{row}</Text>
-      ))}
-      {paused && (
-        <Text bold color="yellow">
-          || PAUSED — Claude needs you
-        </Text>
+      {/* The playfield: its own hard boundary — the walls that kill you. */}
+      <Box flexDirection="column" borderStyle="single" borderColor="green" marginTop={1}>
+        {renderBoard(game).map((row, i) => (
+          <Text key={i}>{row}</Text>
+        ))}
+      </Box>
+      {autoPaused && (
+        <Box flexDirection="column" borderStyle="round" borderColor="yellow" marginTop={1}>
+          <Text bold color="black" backgroundColor="yellow">
+            == PAUSED — CLAUDE NEEDS YOU ==
+          </Text>
+          <Text color="black" backgroundColor="yellow">
+            Claude stopped and is waiting for your input in its pane.
+          </Text>
+          <Text color="black" backgroundColor="yellow">
+            The game resumes automatically when Claude gets back to work.
+          </Text>
+        </Box>
+      )}
+      {!autoPaused && manualPaused && (
+        <Box marginTop={1}>
+          <Text bold color="yellow">
+            PAUSED — press p to resume
+          </Text>
+        </Box>
       )}
       {offline && (
         <Text color="red">
@@ -95,7 +119,7 @@ export function App({ activity }: { activity: Activity }) {
           GAME OVER (score {game.score}) — Enter to restart
         </Text>
       )}
-      <Text dimColor>arrows / WASD steer - q quit</Text>
+      <Text dimColor>arrows / WASD steer - p pause - q quit</Text>
     </Box>
   );
 }
