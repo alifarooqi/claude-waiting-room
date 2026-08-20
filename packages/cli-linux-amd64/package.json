@@ -1,6 +1,6 @@
 {
   "name": "@waiting-room/cli-linux-amd64",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "waiting-room binary for linux/amd64.",
   "license": "MIT",
   "os": ["linux"],

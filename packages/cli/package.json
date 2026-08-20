@@ -1,6 +1,6 @@
 {
   "name": "@waiting-room/cli",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Binary distribution wrapper for the Waiting Room daemon (waiting-room).",
   "license": "MIT",
   "type": "module",
