@@ -17,6 +17,9 @@ packages/cli-linux-*/bin/
 *.sock
 .waiting-room/
 
+# Reference docs (local only, not part of the published repo)
+/resources/
+
 # OS / editor
 .DS_Store
 .idea/
