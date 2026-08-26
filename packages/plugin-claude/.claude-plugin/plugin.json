@@ -1,5 +1,14 @@
 {
-  "name": "claude-waiting-room",
-  "version": "0.1.0",
-  "description": "Pause side activities and snap tmux focus back when Claude Code needs you."
+  "name": "waiting-room",
+  "displayName": "Waiting Room",
+  "version": "1.0.0",
+  "description": "Pause side activities and snap tmux focus back when Claude Code needs you.",
+  "author": {
+    "name": "Ali Farooqi",
+    "url": "https://github.com/alifarooqi"
+  },
+  "homepage": "https://github.com/alifarooqi/claude-waiting-room",
+  "repository": "https://github.com/alifarooqi/claude-waiting-room",
+  "license": "MIT",
+  "keywords": ["tmux", "focus", "agentic", "claude", "game", "productivity"]
 }

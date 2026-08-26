@@ -1,33 +1,236 @@
 #!/bin/sh
-# Resolve the waiting-room binary for Claude Code hook invocations:
-#   1. $WAITING_ROOM_BIN (explicit override)
-#   2. vendored platform binary next to this script (populated by
-#      `make plugin-pack` / release packaging)
-#   3. a monorepo dev checkout (packages/plugin-claude/bin → daemon/bin)
-#   4. `waiting-room` on PATH
-#   5. fail open: exit 0 silently — hooks must never break Claude.
-set -u
+# waiting-room — single-file resolver + first-run installer for the
+# Waiting Room daemon. Replaces both the v1.0.0 vendored-binary resolver
+# and the install-on-first-launch fetch.
+#
+# Subcommands:
+#   daemon          Ensure cached binary, then run `waiting-room daemon`
+#                   detached (no foreground stdout, no SIGHUP from Claude).
+#                   Used by the SessionStart hook.
+#   emit <event>    Forward a Claude hook event to the daemon.
+#   watch           Live subscriber (used by humans).
+#   status          Print the session registry table.
+#   version         Print the daemon version.
+#   list-games      Print waiting-room-* CLIs found on $PATH.
+#   launch <name>   exec waiting-room-<name> from PATH.
+#   _install_only   (internal) install without exec — used by `daemon`.
+#
+# Cached binary lives at $CLAUDE_PLUGIN_ROOT/bin/.wr-cache/waiting-room.
+# Hook commands are async + fire-and-forget; on any failure we exit 0 so
+# Claude never sees an error. See docs/security-uds.md.
 
-if [ -n "${WAITING_ROOM_BIN:-}" ] && [ -x "${WAITING_ROOM_BIN}" ]; then
-  exec "${WAITING_ROOM_BIN}" "$@"
+# Hardcoded plugin version. Bump atomically with .claude-plugin/plugin.json.
+WAITING_ROOM_VERSION="${WAITING_ROOM_VERSION:-v1.0.0}"
+
+# Repo + asset location. WAITING_ROOM_RELEASE_BASE overrides the GitHub URL
+# (used by CI smoke tests pointing at a stubbed release on disk).
+WAITING_ROOM_RELEASE_BASE="${WAITING_ROOM_RELEASE_BASE:-https://github.com/alifarooqi/claude-waiting-room/releases/download}"
+
+# 1. Resolve the plugin root (env override beats filesystem).
+if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
+    root=$CLAUDE_PLUGIN_ROOT
+else
+    dir=$(CDPATH='' cd -- "$(dirname -- "$0")" 2>/dev/null) && root=$(CDPATH='' cd -- "$dir/.." 2>/dev/null && pwd) || exit 0
 fi
 
-dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd) || exit 0
+cache=$root/bin/.wr-cache
+bin=$cache/waiting-room
+marker=$cache/.install.failed
+version_file=$cache/.installed-version
+log=$cache/daemon.log
 
-for candidate in "$dir"/waiting-room-*; do
-  if [ -x "$candidate" ]; then
-    exec "$candidate" "$@"
-  fi
-done
+# 2. Resolver-owned commands (handled here, NEVER forwarded to the daemon).
+#    These must work whether or not the install has succeeded, so they
+#    run BEFORE the fast path. The daemon only handles: daemon, emit,
+#    watch, status, version.
+case "$1" in
+    version|-v|--version)
+        printf 'waiting-room %s\n' "$WAITING_ROOM_VERSION"
+        exit 0
+        ;;
+    help|-h|--help)
+        cat <<'EOF'
+waiting-room — pause activities & refocus when Claude Code needs you.
 
-# Dev checkout: this script is packages/plugin-claude/bin/waiting-room.
-repo_bin="$dir/../../../daemon/bin/waiting-room"
+Usage:
+  waiting-room <command> [args]
+
+Commands:
+  daemon         Run the background IPC daemon
+  emit           Emit a lifecycle event (used by Claude Code hooks)
+  watch          Live subscriber: print session state changes
+  status         Show daemon + session registry table
+  list-games     List installed waiting-room-* games on PATH
+  launch <game>  Launch a waiting-room-<game> activity
+  version        Print version
+  help           Show this help
+EOF
+        exit 0
+        ;;
+    list-games)
+        # POSIX: list PATH binaries matching a prefix.
+        # `compgen -c` is bash; the portable trick is to walk PATH and match.
+        # Cheapest reliable cross-platform: shell out to the equivalent of
+        # bash's `compgen -c`, which doesn't is to scan $PATH dirs.
+        PATH_SCAN=$(IFS=:; for d in $PATH; do
+            [ -d "$d" ] || continue
+            for f in "$d"/waiting-room-*; do
+                [ -x "$f" ] && basename "$f"
+            done
+        done)
+        printf '%s\n' $PATH_SCAN 2>/dev/null | sort -u
+        exit 0
+        ;;
+    launch)
+        shift
+        name=$1
+        if [ -z "$name" ]; then exit 0; fi
+        # Exec the matched game from PATH (assumes convention waiting-room-<name>).
+        if command -v "waiting-room-$name" >/dev/null 2>&1; then
+            exec "waiting-room-$name"
+        fi
+        # Not on PATH: surface a clear error to stderr (visible when run
+        # manually, swallowed by Claude hooks via the install script's
+        # captured pipe — we don't suppress stderr because users want
+        # this hint when they run `/waiting-room launch snake` interactively).
+        printf 'waiting-room: game "%s" not installed (try `npm install -g @waiting-room/game-%s`)\n' "$name" "$name" >&2
+        exit 0
+        ;;
+esac
+
+# 3. Fast path: cached binary present + version match → exec it.
+if [ -x "$bin" ] && [ "$(cat "$version_file" 2>/dev/null)" = "$WAITING_ROOM_VERSION" ]; then
+    exec "$bin" "$@"
+fi
+
+# 4. Install (if no failure marker) — 6-step pipeline.
+if [ ! -f "$marker" ] && [ ! -x "$bin" ]; then
+    # a. Detect platform with env overrides.
+    WAITING_ROOM_OS="${WAITING_ROOM_OS:-}"
+    WAITING_ROOM_ARCH="${WAITING_ROOM_ARCH:-}"
+    if [ -z "$WAITING_ROOM_OS" ] || [ -z "$WAITING_ROOM_ARCH" ]; then
+        if command -v uname >/dev/null 2>&1; then
+            uname_s=$(uname -s 2>/dev/null | tr 'A-Z' 'a-z')
+            uname_m=$(uname -m 2>/dev/null)
+            case "$uname_s" in
+                darwin) WAITING_ROOM_OS=darwin ;;
+                linux)  WAITING_ROOM_OS=linux ;;
+            esac
+            case "$uname_m" in
+                arm64|aarch64) WAITING_ROOM_ARCH=arm64 ;;
+                x86_64)        WAITING_ROOM_ARCH=amd64 ;;
+            esac
+        fi
+    fi
+
+    case "$WAITING_ROOM_OS-$WAITING_ROOM_ARCH" in
+        darwin-arm64|darwin-amd64|linux-arm64|linux-amd64) ;;
+        *) : # unsupported: fail open silently
+            mkdir -p -m 0700 "$cache" 2>/dev/null || exit 0
+            : > "$marker" 2>/dev/null || exit 0
+            exit 0
+            ;;
+    esac
+
+    # b. Make the cache dir (0700, umask-independent).
+    mkdir -p -m 0700 "$cache" 2>/dev/null || exit 0
+
+    # c. Download the tarball + checksums to a temp dir.
+    TMPDIR_BASE="${TMPDIR:-/tmp}"
+    TMP=$(mktemp -d "${TMPDIR_BASE%/}/wr-install.XXXXXX") || exit 0
+    trap 'rm -rf "$TMP"' EXIT
+
+    base_url="${WAITING_ROOM_RELEASE_BASE}/${WAITING_ROOM_VERSION}"
+    tarball="waiting-room_${WAITING_ROOM_OS}_${WAITING_ROOM_ARCH}.tar.gz"
+    url_tarball="${base_url}/${tarball}"
+    url_checksums="${base_url}/checksums.txt"
+
+    if ! command -v curl >/dev/null 2>&1; then exit 0; fi
+
+    curl -fsSL --connect-timeout 10 --max-time 30 \
+        -o "$TMP/tarball" -- "$url_tarball" 2>/dev/null || {
+        rm -rf "$TMP"; trap - EXIT
+        : > "$marker" 2>/dev/null || exit 0
+        exit 0
+    }
+    curl -fsSL --connect-timeout 10 --max-time 30 \
+        -o "$TMP/checksums.txt" -- "$url_checksums" 2>/dev/null || {
+        rm -rf "$TMP"; trap - EXIT
+        : > "$marker" 2>/dev/null || exit 0
+        exit 0
+    }
+
+    # d. Verify SHA-256. goreleaser style: "<64hex>  <name>" (no glob).
+    expected_sha=$(awk -v n="$tarball" '
+        $1 ~ /^[0-9a-f]{64}$/ && $2 == n { print $1; exit }
+    ' "$TMP/checksums.txt")
+    if [ -z "$expected_sha" ]; then
+        rm -rf "$TMP"; trap - EXIT
+        : > "$marker" 2>/dev/null || exit 0
+        exit 0
+    fi
+    if ! command -v sha256sum >/dev/null 2>&1; then exit 0; fi
+    actual_sha=$(sha256sum "$TMP/tarball" 2>/dev/null | awk '{print $1}')
+    if [ "$expected_sha" != "$actual_sha" ]; then
+        rm -rf "$TMP"; trap - EXIT
+        : > "$marker" 2>/dev/null || exit 0
+        exit 0
+    fi
+
+    # e. Extract tarball. Goreleaser default = single file "waiting-room" at root.
+    if ! command -v tar >/dev/null 2>&1; then exit 0; fi
+    if ! tar -xzf "$TMP/tarball" -C "$cache" 2>/dev/null; then
+        rm -rf "$TMP"; trap - EXIT
+        : > "$marker" 2>/dev/null || exit 0
+        exit 0
+    fi
+    if [ ! -x "$bin" ]; then
+        rm -rf "$TMP"; trap - EXIT
+        : > "$marker" 2>/dev/null || exit 0
+        exit 0
+    fi
+
+    # f. Stamp the version + remove any prior marker.
+    printf '%s' "$WAITING_ROOM_VERSION" > "$version_file" 2>/dev/null || exit 0
+    rm -f "$marker" 2>/dev/null || exit 0
+    rm -rf "$TMP"; trap - EXIT
+fi
+
+# 5. If the binary is now installed, exec it.
+if [ -x "$bin" ]; then
+    case "$1" in
+        daemon)
+            # Detached spawn — never let Claude's lifecycle kill the daemon.
+            # `nohup` is POSIX and present on every Unix Claude runs on.
+            # stdin/stdout/stderr all redirected so the daemon's startup
+            # banner (which goes to stdout) never appears in any captured pipe.
+            # The log file is the user's diagnostic surface.
+            nohup "$bin" daemon </dev/null >>"$log" 2>&1 &
+            exit 0
+            ;;
+        _install_only)
+            exit 0
+            ;;
+        *)
+            exec "$bin" "$@"
+            ;;
+    esac
+fi
+
+# 6. Fallback chain (after install or on cache miss with marker):
+#    WAITING_ROOM_BIN env override → monorepo dev checkout → PATH → exit 0.
+if [ -n "${WAITING_ROOM_BIN:-}" ] && [ -x "${WAITING_ROOM_BIN}" ]; then
+    exec "${WAITING_ROOM_BIN}" "$@"
+fi
+
+# Monorepo dev checkout: this script is packages/plugin-claude/bin/waiting-room.
+repo_bin="$root/../../../daemon/bin/waiting-room"
 if [ -x "$repo_bin" ]; then
-  exec "$repo_bin" "$@"
+    exec "$repo_bin" "$@"
 fi
 
 if command -v waiting-room >/dev/null 2>&1; then
-  exec waiting-room "$@"
+    exec waiting-room "$@"
 fi
 
 # Fail open (see plugin README: hooks are async and must never error Claude).

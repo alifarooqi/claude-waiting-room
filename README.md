@@ -52,17 +52,28 @@ make integration# real-tmux integration tests (requires tmux)
 make plugin-pack# cross-compile 4 platform binaries + vendor into plugin-claude
 ```
 
-## Try it (development)
+## Try it
+
+### As an enduser (after marketplace + npm publish)
+
+```
+/plugin marketplace add alifarooqi/waiting-room-marketplace
+/plugin install waiting-room
+npm install -g @waiting-room/game-snake
+# inside Claude, in a tmux pane:
+/waiting-room:start snake
+```
+
+### From source (dev / no marketplace yet)
 
 ```bash
 make build
-./daemon/bin/waiting-room daemon &      # background IPC daemon
-./daemon/bin/waiting-room watch         # live state observer
-# in another tmux pane, run Claude with the plugin:
+# in a tmux pane:
 claude --plugin-dir packages/plugin-claude
+# The SessionStart hook will download the daemon on first launch.
 ```
 
-Submit a prompt in Claude → focus jumps to your activity pane; Claude stops or asks permission → focus snaps back. See [`packages/plugin-claude`](packages/plugin-claude).
+See [`packages/plugin-claude`](packages/plugin-claude) for the full install story (skills, slash commands, troubleshooting).
 
 ## Write your own activity
 

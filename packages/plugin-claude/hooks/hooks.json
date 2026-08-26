@@ -1,6 +1,19 @@
 {
-  "description": "Emit Claude Code lifecycle state to the Waiting Room daemon. All hooks are fire-and-forget (async) and must never block Claude: they call the `waiting-room emit` one-shot client, which fails open (exits 0 silently) when the daemon is unreachable.",
+  "description": "Waiting Room plugin hooks — SessionStart launches the daemon (downloads on first call, cached thereafter); UserPromptSubmit/Stop/Notification forward lifecycle events as fire-and-forget emits that always exit 0.",
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/waiting-room",
+            "args": ["daemon"],
+            "async": true,
+            "timeout": 15
+          }
+        ]
+      }
+    ],
     "UserPromptSubmit": [
       {
         "hooks": [
