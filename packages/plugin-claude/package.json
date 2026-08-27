@@ -17,5 +17,9 @@
     "lint": "node -e \"require('fs').accessSync('hooks/hooks.json'); require('fs').accessSync('skills/start/SKILL.md'); require('fs').accessSync('bin/waiting-room'); require('fs').accessSync('bin/wr-launch')\"",
     "test": "echo \"no tests yet\"",
     "clean": "echo ok"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/alifarooqi/claude-waiting-room"
   }
 }

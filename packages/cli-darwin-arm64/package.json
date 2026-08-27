@@ -3,7 +3,17 @@
   "version": "1.0.0",
   "description": "waiting-room binary for darwin/arm64.",
   "license": "MIT",
-  "os": ["darwin"],
-  "cpu": ["arm64"],
-  "files": ["bin"]
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "files": [
+    "bin"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/alifarooqi/claude-waiting-room"
+  }
 }

@@ -22,5 +22,9 @@
     "@waiting-room/cli-darwin-amd64": "workspace:*",
     "@waiting-room/cli-linux-arm64": "workspace:*",
     "@waiting-room/cli-linux-amd64": "workspace:*"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/alifarooqi/claude-waiting-room"
   }
 }

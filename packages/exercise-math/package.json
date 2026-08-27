@@ -26,5 +26,9 @@
     "@waiting-room/tsconfig": "workspace:*",
     "typescript": "^5.6.0",
     "vitest": "^2.1.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/alifarooqi/claude-waiting-room"
   }
 }
