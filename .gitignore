@@ -13,6 +13,10 @@ packages/plugin-claude/bin/waiting-room-*
 packages/cli-darwin-*/bin/
 packages/cli-linux-*/bin/
 
+# Plugin-claude install cache (populated on first launch by the resolver;
+# runtime artifact, never tracked)
+packages/plugin-claude/bin/.wr-cache/
+
 # Waiting Room runtime
 *.sock
 .waiting-room/

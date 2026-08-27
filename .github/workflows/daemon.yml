@@ -26,3 +26,36 @@ jobs:
         run: cd daemon && go test ./...
       - name: go build (static)
         run: cd daemon && CGO_ENABLED=0 go build -trimpath -o /tmp/waiting-room ./cmd/waiting-room
+      - name: shellcheck resolver (POSIX sh)
+        run: |
+          if command -v shellcheck >/dev/null 2>&1; then
+            shellcheck -s sh packages/plugin-claude/bin/waiting-room
+          elif command -v apt-get >/dev/null 2>&1; then
+            sudo apt-get update && sudo apt-get install -y shellcheck
+            shellcheck -s sh packages/plugin-claude/bin/waiting-room
+          elif command -v brew >/dev/null 2>&1; then
+            brew install shellcheck
+            shellcheck -s sh packages/plugin-claude/bin/waiting-room
+          else
+            echo "shellcheck not installable on this runner; skipping"
+            exit 0
+          fi
+      - name: validate plugin manifest
+        run: |
+          node -e '
+            const fs = require("node:fs");
+            const p = JSON.parse(fs.readFileSync("packages/plugin-claude/.claude-plugin/plugin.json", "utf8"));
+            const required = ["name", "version", "description"];
+            for (const k of required) {
+              if (p[k] === undefined) { console.error("missing required field:", k); process.exit(1); }
+            }
+            if (!/^[a-z][a-z0-9-]*$/.test(p.name)) { console.error("invalid name:", p.name); process.exit(1); }
+            if (!/^[0-9]+\.[0-9]+\.[0-9]+/.test(p.version)) { console.error("invalid version:", p.version); process.exit(1); }
+            const f = ["hooks/hooks.json", "skills/start/SKILL.md", "bin/waiting-room"];
+            for (const path of f) {
+              if (!fs.existsSync("packages/plugin-claude/" + path)) { console.error("missing:", path); process.exit(1); }
+            }
+            const hooks = JSON.parse(fs.readFileSync("packages/plugin-claude/hooks/hooks.json", "utf8"));
+            if (!hooks.hooks || !hooks.hooks.SessionStart) { console.error("SessionStart hook not registered"); process.exit(1); }
+            console.log("plugin manifest ok:", p.name, p.version);
+          '
