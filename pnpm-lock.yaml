@@ -91,11 +91,7 @@ importers:
         specifier: ^2.1.0
         version: 2.1.9(@types/node@22.20.1)
 
-  packages/plugin-claude:
-    dependencies:
-      '@waiting-room/cli':
-        specifier: workspace:*
-        version: link:../cli
+  packages/plugin-claude: {}
 
   packages/sdk:
     devDependencies:
