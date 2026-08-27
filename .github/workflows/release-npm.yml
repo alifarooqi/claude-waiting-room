@@ -67,6 +67,12 @@ jobs:
       #      differs from what's on npm, with provenance.
       # On a follow-up push from the version commit (no changesets), the
       # action no-ops and the workflow exits cleanly.
+      #
+      # NPM_TOKEN is passed via the action's `secrets` input (not via `env:`
+      # — the action doesn't read NPM_TOKEN from the step's env block; the
+      # `secrets` input is the documented way). Add secrets.NPM_TOKEN in
+      # Settings -> Secrets and variables -> Actions -> New repository
+      # secret.
       - uses: changesets/action@v1
         with:
           version: pnpm changeset version
@@ -74,6 +80,7 @@ jobs:
           commit: 'chore(release): version packages'
           title: 'chore(release): version packages'
           setupGitUser: true
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          npm-token: ${{ secrets.NPM_TOKEN }}
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_OPTIONS: --max-old-space-size=2048
