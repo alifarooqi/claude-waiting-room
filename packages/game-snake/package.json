@@ -1,7 +1,6 @@
 {
   "name": "@waiting-room/game-snake",
-  "version": "0.1.0",
-  "private": true,
+  "version": "1.0.0",
   "description": "Terminal Snake — a Waiting Room reference activity.",
   "license": "MIT",
   "type": "module",
@@ -17,7 +16,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@waiting-room/sdk": "workspace:*",
+    "@waiting-room/sdk": "^1.0.0",
     "ink": "^5.1.0",
     "react": "^18.3.1"
   },
