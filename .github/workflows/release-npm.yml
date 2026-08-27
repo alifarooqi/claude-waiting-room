@@ -1,0 +1,79 @@
+name: release-npm
+
+# Publishes the @waiting-room/* packages to npm when a Changesets markdown
+# file (.changeset/*.md) is consumed. Peer to release.yml, which keeps
+# handling the goreleaser binary tarball + GitHub Release; this workflow
+# handles the npm side. The two never conflict because their triggers
+# differ (branches: [main] vs. tags: ['v*']).
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write            # push the version-bump commit
+  pull-requests: write       # reserved for a future marketplace bump step
+  id-token: write            # npm provenance / OIDC-style automation
+
+# Two pushes to main within a short window: serialize, don't cancel.
+# The action is idempotent — a no-op (no changesets) just exits cleanly.
+concurrency:
+  group: release-npm
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0     # full history for the version-bump commit
+
+      - uses: pnpm/action-setup@v4   # picks up packageManager field
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        # Not --frozen-lockfile; the action will rewrite package.json versions,
+        # and we want the lockfile in sync with those bumps.
+        run: pnpm install
+
+      - name: Build all TS packages
+        # Builds sdk, game-snake, exercise-math. cli and cli-* are no-ops.
+        run: pnpm -r run build
+
+      - uses: actions/setup-go@v5
+        id: go
+        with:
+          go-version: '1.23'
+
+      - name: Cross-compile platform binaries (cli-pack)
+        # CRITICAL: the 4 cli-* packages ship their binary inside bin/, and
+        # those binaries are gitignored. Without this step, those packages
+        # publish empty tarballs. See Makefile line 56-66.
+        run: make cli-pack VERSION=$(node -p "require('./packages/plugin-claude/package.json').version")
+        env:
+          PATH: ${{ steps.go.outputs.go-install-path }}/bin:${{ env.PATH }}
+
+      # The action does the heavy lifting:
+      #   1. pnpm changeset version — bumps package.json versions, writes
+      #      per-package CHANGELOG.md, deletes consumed changesets, commits
+      #      `chore(release): version packages` back to main.
+      #   2. pnpm changeset publish — publishes only packages whose version
+      #      differs from what's on npm, with provenance.
+      # On a follow-up push from the version commit (no changesets), the
+      # action no-ops and the workflow exits cleanly.
+      - uses: changesets/action@v1
+        with:
+          version: pnpm changeset version
+          publish: pnpm changeset publish
+          commit: 'chore(release): version packages'
+          title: 'chore(release): version packages'
+          setupGitUser: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
