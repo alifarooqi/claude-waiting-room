@@ -1,0 +1,11 @@
+{
+  "$schema": "https://unpkg.com/@changesets/cli@^2.27.0/schema.json",
+  "changelog": ["@changesets/cli"],
+  "commit": false,
+  "linked": [],
+  "fixed": [],
+  "access": "public",
+  "baseBranch": "main",
+  "updateInternalDependencies": "patch",
+  "repo": "alifarooqi/claude-waiting-room"
+}

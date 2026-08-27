@@ -14,9 +14,13 @@
     "lint": "make lint",
     "fmt": "make fmt",
     "integration": "make integration",
-    "clean": "make clean"
+    "clean": "make clean",
+    "changeset": "pnpm changeset",
+    "version:packages": "pnpm changeset version",
+    "release:npm": "pnpm changeset publish"
   },
   "devDependencies": {
+    "@changesets/cli": "^2.27.0",
     "typescript": "^5.6.0"
   }
 }
