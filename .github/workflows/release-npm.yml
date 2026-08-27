@@ -105,13 +105,16 @@ jobs:
         run: |
           set -euo pipefail
           for dir in packages/*/; do
-            name=$(node -p "require('$dir/package.json').name" 2>/dev/null) || continue
+            # Strip the trailing slash so the require path doesn't get
+            # interpreted as a UNC `//package.json` on Windows/macOS.
+            dir=${dir%/}
+            name=$(node -p "require('./$dir/package.json').name" 2>/dev/null) || continue
             # skip private packages (tsconfig, etc.)
-            if node -e "process.exit(require('$dir/package.json').private ? 0 : 1)"; then
+            if node -e "process.exit(require('./$dir/package.json').private ? 0 : 1)"; then
               echo "  $name: private, skip"
               continue
             fi
-            local_v=$(node -p "require('$dir/package.json').version")
+            local_v=$(node -p "require('./$dir/package.json').version")
             published_v=$(npm view "$name" version 2>/dev/null || echo "")
             if [ "$local_v" = "$published_v" ]; then
               echo "  $name $local_v: already on npm, skip"
