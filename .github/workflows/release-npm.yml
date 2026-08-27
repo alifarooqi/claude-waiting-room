@@ -65,9 +65,10 @@ jobs:
       # we can serialize the pnpm invocations and avoid OOMing the
       # runner on 9 parallel `pnpm publish` children.
       #
-      # NPM_TOKEN is passed via the action's `secrets.npm-token` input
-      # (NOT via `env:` — the action doesn't read NPM_TOKEN from the
-      # step's env block; the `secrets` input is the documented way).
+      # changesets/action@v1 has NO `npm-token` input; it just looks for
+      # NPM_TOKEN / NODE_AUTH_TOKEN / GITHUB_TOKEN in env. The
+      # `github-token` here is the action's own secret-detection input
+      # for the version-bump commit + GitHub Release creation.
       - uses: changesets/action@v1
         with:
           version: pnpm changeset version
@@ -76,7 +77,6 @@ jobs:
           title: 'chore(release): version packages'
           setupGitUser: true
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          npm-token: ${{ secrets.NPM_TOKEN }}
         env:
           NODE_OPTIONS: --max-old-space-size=2048
 
