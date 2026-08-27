@@ -78,7 +78,7 @@ EOF
                 [ -x "$f" ] && basename "$f"
             done
         done)
-        printf '%s\n' $PATH_SCAN 2>/dev/null | sort -u
+        printf '%s\n' "$PATH_SCAN" 2>/dev/null | sort -u
         exit 0
         ;;
     launch)
@@ -93,7 +93,7 @@ EOF
         # manually, swallowed by Claude hooks via the install script's
         # captured pipe — we don't suppress stderr because users want
         # this hint when they run `/waiting-room launch snake` interactively).
-        printf 'waiting-room: game "%s" not installed (try `npm install -g @waiting-room/game-%s`)\n' "$name" "$name" >&2
+        printf 'waiting-room: game "%s" not installed (try "npm install -g @waiting-room/game-%s")\n' "$name" "$name" >&2
         exit 0
         ;;
 esac
@@ -110,7 +110,7 @@ if [ ! -f "$marker" ] && [ ! -x "$bin" ]; then
     WAITING_ROOM_ARCH="${WAITING_ROOM_ARCH:-}"
     if [ -z "$WAITING_ROOM_OS" ] || [ -z "$WAITING_ROOM_ARCH" ]; then
         if command -v uname >/dev/null 2>&1; then
-            uname_s=$(uname -s 2>/dev/null | tr 'A-Z' 'a-z')
+            uname_s=$(uname -s 2>/dev/null | tr '[:upper:]' '[:lower:]')
             uname_m=$(uname -m 2>/dev/null)
             case "$uname_s" in
                 darwin) WAITING_ROOM_OS=darwin ;;
@@ -126,14 +126,16 @@ if [ ! -f "$marker" ] && [ ! -x "$bin" ]; then
     case "$WAITING_ROOM_OS-$WAITING_ROOM_ARCH" in
         darwin-arm64|darwin-amd64|linux-arm64|linux-amd64) ;;
         *) : # unsupported: fail open silently
-            mkdir -p -m 0700 "$cache" 2>/dev/null || exit 0
+            mkdir -p "$cache" 2>/dev/null || exit 0
+            chmod 0700 "$cache" 2>/dev/null || exit 0
             : > "$marker" 2>/dev/null || exit 0
             exit 0
             ;;
     esac
 
     # b. Make the cache dir (0700, umask-independent).
-    mkdir -p -m 0700 "$cache" 2>/dev/null || exit 0
+    mkdir -p "$cache" 2>/dev/null || exit 0
+    chmod 0700 "$cache" 2>/dev/null || exit 0
 
     # c. Download the tarball + checksums to a temp dir.
     TMPDIR_BASE="${TMPDIR:-/tmp}"
