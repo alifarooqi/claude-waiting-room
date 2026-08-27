@@ -87,6 +87,10 @@ See [`docs/security-uds.md`](docs/security-uds.md) for the threat model, the pee
 
 See [`docs/architecture.md`](docs/architecture.md) and the [ADR set](docs/adr/) for the design choices (polyglot monorepo, JSON-lines wire, tmux focus, zero external Go dependencies, …).
 
+## Releasing
+
+See [`docs/releasing.md`](docs/releasing.md) for the cookbook. The repo has two release axes (npm via Changesets; binary tarballs via goreleaser tags); PRs add `.changeset/*.md` files to drive the npm side, and `make bump-waiting-room-version NEW_VERSION=vX.Y.Z` keeps the install-on-first-hook resolver aligned with the goreleaser tag axis.
+
 ## Roadmap
 
 - [x] **M0** — Repo bootstrap
