@@ -1,0 +1,93 @@
+#!/bin/sh
+# wr-launch — open a new tmux pane next to Claude and run a game there.
+#
+# Usage (from the plugin skill):
+#   wr-launch <game-name>
+#
+# Behavior:
+#   - If $TMUX is set: splits a new pane to the right of the current one,
+#     sends `waiting-room-<game>` into it, focuses the new pane, exits 0.
+#   - If not in tmux: prints a helpful hint to stderr and exits 0.
+#   - If the game isn't installed: prints the npm install hint to stderr
+#     in the new pane (so the user sees it), exits 0.
+#
+# Strict POSIX sh. Always exits 0 (Claude hooks must never error Claude).
+# Heuristic for tmux presence: $TMUX is set when Claude Code runs inside
+# a tmux session. This is set by tmux when it forks the pane process.
+
+set -u
+
+game=$1
+if [ -z "$game" ]; then
+    printf 'wr-launch: missing game name\n' >&2
+    exit 0
+fi
+
+if [ -z "${TMUX:-}" ]; then
+    # Not in tmux. Surface a hint to the user and let Claude continue.
+    cat >&2 <<EOF
+wr-launch: not running inside a tmux session.
+
+To use side activities, restart Claude inside tmux:
+
+    tmux new -s wr -d
+    tmux split-window -h -t wr
+    # attach and run claude in one of the panes:
+    tmux attach -t wr
+
+Then in Claude, run /waiting-room:start $game.
+EOF
+    exit 0
+fi
+
+# Detect the tmux server socket.
+#
+# $TMUX format varies by OS (and even by tmux version):
+#   macOS tmux 3.x:    "/private/tmp/tmux-<uid>/default,<pid>,<pane_index>"
+#   Linux tmux:         "/tmp/tmux-<uid>/default,<pid>,<session_id>" (or similar)
+#
+# The socket path is everything before the FIRST comma. Everything after
+# is metadata we don't need (and the count of fields varies, so don't
+# try to parse them).
+tmux_sock=${TMUX%%,*}
+
+if ! command -v tmux >/dev/null 2>&1; then
+    printf 'wr-launch: tmux not installed\n' >&2
+    exit 0
+fi
+
+# Find the current pane id (used as the split anchor). `-F '#{pane_id}'`
+# is critical: without it, `display-message -p` echoes the status-line text
+# (which contains special chars and breaks subsequent greps).
+pane_id=$(tmux -S "$tmux_sock" display-message -p -F '#{pane_id}' 2>/dev/null) || pane_id=
+if [ -z "$pane_id" ]; then
+    printf 'wr-launch: cannot determine current tmux pane\n' >&2
+    exit 0
+fi
+
+# Check the game exists on PATH before opening a pane (so the user sees the
+# install hint IN the new pane if it's missing, not after a confusing flash
+# of a crashed game).
+if ! command -v "waiting-room-$game" >/dev/null 2>&1; then
+    tmux -S "$tmux_sock" split-window -h -t "$pane_id" 2>/dev/null
+    tmux -S "$tmux_sock" send-keys -t "{last}" \
+        "printf 'wr-launch: %s is not installed.\\nTry: npm install -g @waiting-room/game-%s\\n' \"$game\" \"$game\"" \
+        "C-m" 2>/dev/null || true
+    tmux -S "$tmux_sock" select-pane -t "{last}" 2>/dev/null || true
+    exit 0
+fi
+
+# Open the new pane to the right of the current one. `-d` defers focus-shift
+# so the user's terminal doesn't flicker mid-command.
+tmux -S "$tmux_sock" split-window -dh -t "$pane_id" 2>/dev/null
+
+# Find the just-created pane (the one in the same window that's not the
+# current pane). Use `-F '#{pane_id}'` to avoid the status-line echo bug.
+new_pane=$(tmux -S "$tmux_sock" list-panes -F '#{pane_id}' 2>/dev/null \
+    | awk -v me="$pane_id" '$0 != me { print; exit }') || new_pane=
+if [ -n "$new_pane" ]; then
+    tmux -S "$tmux_sock" send-keys -t "$new_pane" "waiting-room-$game" C-m 2>/dev/null || true
+    tmux -S "$tmux_sock" select-pane -t "$new_pane" 2>/dev/null || true
+fi
+
+exit 0
