@@ -1,10 +1,14 @@
 name: release-npm
 
 # Publishes the @waiting-room/* packages to npm when a Changesets markdown
-# file (.changeset/*.md) is consumed. Peer to release.yml, which keeps
-# handling the goreleaser binary tarball + GitHub Release; this workflow
-# handles the npm side. The two never conflict because their triggers
-# differ (branches: [main] vs. tags: ['v*']).
+# file (.changeset/*.md) is consumed. Peer to release.yml (goreleaser
+# binary tarballs); they have non-intersecting triggers (branches vs tags).
+#
+# Why this workflow is custom rather than the default
+# `changesets/action@v1`: the action spawns parallel `pnpm publish`
+# children for every workspace package, which OOMs the 7 GB ubuntu
+# runner when there are 9+ packages. We do the version-bump + publish
+# ourselves in two explicit, serial, memory-bounded steps.
 
 on:
   push:
@@ -14,7 +18,7 @@ on:
 permissions:
   contents: write            # push the version-bump commit
   pull-requests: write       # reserved for a future marketplace bump step
-  id-token: write            # npm provenance / OIDC-style automation
+  id-token: write            # reserved for npm trusted publishing
 
 # Two pushes to main within a short window: serialize, don't cancel.
 # The action is idempotent — a no-op (no changesets) just exits cleanly.
@@ -37,19 +41,20 @@ jobs:
           node-version: '20'
           cache: 'pnpm'
 
-      - name: Install dependencies
-        # Not --frozen-lockfile; the action will rewrite package.json versions,
-        # and we want the lockfile in sync with those bumps.
-        run: pnpm install
-
-      - name: Build all TS packages
-        # Builds sdk, game-snake, exercise-math. cli and cli-* are no-ops.
-        run: pnpm -r run build
-
       - uses: actions/setup-go@v5
         id: go
         with:
           go-version: '1.23'
+
+      - name: Install dependencies
+        # Not --frozen-lockfile; we rewrite package.json versions.
+        run: pnpm install
+        env:
+          NODE_OPTIONS: --max-old-space-size=2048
+
+      - name: Build all TS packages
+        # Builds sdk, game-snake, exercise-math. cli and cli-* are no-ops.
+        run: pnpm -r run build
 
       - name: Cross-compile platform binaries (cli-pack)
         # CRITICAL: the 4 cli-* packages ship their binary inside bin/, and
@@ -59,34 +64,44 @@ jobs:
         env:
           PATH: ${{ steps.go.outputs.go-install-path }}/bin:${{ env.PATH }}
 
-      # Step 1: let changesets/action@v1 do the version-bump (writes
-      # CHANGELOG, commits `chore(release): version packages` back to
-      # main). It does NOT publish — we publish explicitly below so
-      # we can serialize the pnpm invocations and avoid OOMing the
-      # runner on 9 parallel `pnpm publish` children.
-      #
-      # changesets/action@v1 has NO `npm-token` input; it just looks for
-      # NPM_TOKEN / NODE_AUTH_TOKEN / GITHUB_TOKEN in env. The
-      # `github-token` here is the action's own secret-detection input
-      # for the version-bump commit + GitHub Release creation.
-      - uses: changesets/action@v1
-        with:
-          version: pnpm changeset version
-          publish: echo "skipping action publish; custom step below"   # no-op
-          commit: 'chore(release): version packages'
-          title: 'chore(release): version packages'
-          setupGitUser: true
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+      # ==== Version-bump + commit ====
+      # Bump versions per `.changeset/*.md`, write CHANGELOG, and commit
+      # `chore(release): version packages` back to main. We do this
+      # ourselves (not via changesets/action@v1) so we control the
+      # execution: the action's default pnpm invocation fans out across
+      # the whole workspace and OOMs the runner.
+      - name: Configure git for the release commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Apply changesets (bump versions, write CHANGELOGs)
+        # Run from repo root. Use --ignore-scripts to avoid any package
+        # post-install hooks. If no .changeset/*.md files exist, this
+        # is a no-op (pnpm exits 0) and we skip the commit step below.
+        run: pnpm changeset version
         env:
           NODE_OPTIONS: --max-old-space-size=2048
 
-      # Step 2: publish sequentially, one package at a time, with an
-      # .npmrc that pulls NPM_TOKEN from the action secret. This is
-      # the load-bearing change vs. the previous workflow: pnpm
-      # changeset publish spawns parallel `pnpm publish` children,
-      # which OOMed the ubuntu-latest runner (7 GB default) at 9
-      # parallel processes. Serializing via a workspace loop keeps
-      # memory bounded.
+      - name: Commit version bumps
+        # Skip if no changesets were consumed (pnpm doesn't modify any files
+        # in that case, but the action's diffing would just create an
+        # empty commit otherwise). Use `git diff --quiet` to detect.
+        run: |
+          if git diff --quiet; then
+            echo "No version bumps to commit; skipping."
+            exit 0
+          fi
+          git add -A
+          git commit -m "chore(release): version packages"
+          git push origin HEAD:main
+        env:
+          NODE_OPTIONS: --max-old-space-size=2048
+
+      # ==== Publish ====
+      # Write a user-level .npmrc that pulls the token from the secret
+      # env, then publish one package at a time, skipping any whose
+      # version already matches what's on npm.
       - name: Configure npm auth
         run: |
           cat > ~/.npmrc <<'EOF'
@@ -101,12 +116,12 @@ jobs:
         # Walk workspace packages in dependency order. For each one, check
         # whether its version differs from npm; only publish if it does.
         # This makes a no-op run cheap (everything already up to date)
-        # and a real run tight (one publish at a time).
+        # and a real run tight (one publish at a time, no OOM).
         run: |
           set -euo pipefail
           for dir in packages/*/; do
-            # Strip the trailing slash so the require path doesn't get
-            # interpreted as a UNC `//package.json` on Windows/macOS.
+            # Strip trailing slash so the require path doesn't get
+            # interpreted as a UNC `//package.json` on macOS/Windows.
             dir=${dir%/}
             name=$(node -p "require('./$dir/package.json').name" 2>/dev/null) || continue
             # skip private packages (tsconfig, etc.)
@@ -126,3 +141,4 @@ jobs:
           done
         env:
           NODE_OPTIONS: --max-old-space-size=2048
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}

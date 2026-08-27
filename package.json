@@ -15,7 +15,6 @@
     "fmt": "make fmt",
     "integration": "make integration",
     "clean": "make clean",
-    "changeset": "pnpm changeset",
     "version:packages": "pnpm changeset version",
     "release:npm": "pnpm changeset publish"
   },

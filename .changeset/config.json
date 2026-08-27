@@ -1,6 +1,6 @@
 {
   "$schema": "https://unpkg.com/@changesets/cli@^2.27.0/schema.json",
-  "changelog": ["@changesets/cli"],
+  "changelog": false,
   "commit": false,
   "linked": [],
   "fixed": [],
