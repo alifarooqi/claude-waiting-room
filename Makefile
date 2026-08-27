@@ -71,3 +71,16 @@ plugin-pack: cli-pack ## Vendor platform binaries into plugin-claude (self-conta
 		cp packages/cli-$$p/bin/waiting-room packages/plugin-claude/bin/waiting-room-$$p || exit 1; \
 	done
 	@echo "plugin-claude is self-contained: packages/plugin-claude/bin/waiting-room-*"
+
+# Bump the version that the install-on-first-hook resolver fetches from
+# GitHub Releases (WAITING_ROOM_VERSION in the resolver) AND the matching
+# Claude plugin manifest version, in lock-step. The new version MUST
+# already exist as a goreleaser-tagged GitHub release before pointing
+# users at it. See docs/releasing.md for the full release flow.
+.PHONY: bump-waiting-room-version
+bump-waiting-room-version:  ## Usage: make bump-waiting-room-version NEW_VERSION=v1.0.3
+	@if [ -z "$(NEW_VERSION)" ]; then \
+		echo "error: NEW_VERSION is required, e.g. make bump-waiting-room-version NEW_VERSION=v1.0.3"; \
+		exit 1; \
+	fi
+	@scripts/bump-waiting-room-version.sh "$(NEW_VERSION)"
