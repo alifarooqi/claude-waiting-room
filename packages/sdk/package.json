@@ -1,6 +1,6 @@
 {
   "name": "@waiting-room/sdk",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Activity SDK for Waiting Room — pause/resume and focus control for side activities while Claude Code works.",
   "license": "MIT",
   "type": "module",
