@@ -2,6 +2,46 @@
 
 pnpm monorepo with **9 npm packages** under `@waiting-room/*` plus a Go daemon (`daemon/`).
 
+## ⛔⛔⛔ HARD RULE: NO DIRECT PUSHES TO MAIN ⛔⛔⛔
+
+**EVERY change — no matter how small — must go through a branch + pull request.**
+
+Direct pushes to `main` are FORBIDDEN. No exceptions for "just a docs tweak", "just a typo", "just bumping a number", or "just the smoke test". The user reviews every PR before merge.
+
+**The reason:** `release-npm.yml` fires on every push to `main` and ships whatever changesets are present. A stray direct push can publish unintended npm versions with no human in the loop. The user explicitly added this rule after a debugging session, and the cost of bypassing it is higher than the cost of opening a PR.
+
+**The right pattern for every task:**
+
+```bash
+# 1. create a feature branch (off main, freshly pulled)
+git checkout main
+git pull --rebase
+git checkout -b <short-descriptive-name>
+
+# 2. do the work
+# ... edits ...
+
+# 3. commit
+git add -A
+git commit -m "..."
+
+# 4. push the branch (NOT main)
+git push origin HEAD
+
+# 5. open a PR with `gh pr create` (or via the GitHub web UI)
+gh pr create --fill --base main
+
+# 6. WAIT for user review. Do NOT merge on the user's behalf.
+# 7. after user approves, the user (or their reviewer) merges.
+#    the release-npm workflow fires automatically on the merge commit.
+```
+
+**If you (the AI assistant) accidentally stage a commit on `main`, STOP. Do not push it. Move the work to a branch first, then push the branch.**
+
+**If the user explicitly asks you to bypass this rule, confirm twice before doing it. The default is always: branch + PR.**
+
+---
+
 ## The two release axes (read first)
 
 1. **npm packages** — managed by Changesets. Auto-published by `.github/workflows/release-npm.yml` on push to main. Authored by `.changeset/*.md` files in PRs.
