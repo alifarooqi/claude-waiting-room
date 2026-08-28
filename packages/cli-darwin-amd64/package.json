@@ -1,6 +1,6 @@
 {
   "name": "@waiting-room/cli-darwin-amd64",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "waiting-room binary for darwin/amd64.",
   "license": "MIT",
   "os": [

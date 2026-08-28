@@ -1,6 +1,6 @@
 {
   "name": "@waiting-room/plugin-claude",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Claude Code plugin that pauses side activities and snaps tmux focus back when Claude needs you. Daemon bootstraps on SessionStart, then /waiting-room:start launches games.",
   "license": "MIT",
   "type": "module",

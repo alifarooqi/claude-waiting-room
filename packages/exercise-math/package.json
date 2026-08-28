@@ -1,6 +1,6 @@
 {
   "name": "@waiting-room/exercise-math",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Multiple-choice math quiz — a Waiting Room reference activity.",
   "license": "MIT",
   "type": "module",
