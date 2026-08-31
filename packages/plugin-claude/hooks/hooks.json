@@ -1,9 +1,15 @@
 {
-  "description": "Waiting Room plugin hooks — SessionStart launches the daemon (downloads on first call, cached thereafter); UserPromptSubmit/Stop/Notification forward lifecycle events as fire-and-forget emits that always exit 0.",
+  "description": "Waiting Room plugin hooks — SessionStart auto-attaches Claude inside a tmux session (if not already) and launches the daemon; UserPromptSubmit/Stop/Notification forward lifecycle events as fire-and-forget emits that always exit 0.",
   "hooks": {
     "SessionStart": [
       {
         "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/wr-attach",
+            "async": true,
+            "timeout": 15
+          },
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/bin/waiting-room",
