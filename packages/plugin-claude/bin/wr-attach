@@ -1,0 +1,64 @@
+#!/bin/sh
+# wr-attach — when Claude runs OUTSIDE a tmux session, exec into a
+# persistent tmux session so side activities (Snake, math quiz, etc.)
+# can split-pane around it. No Claude restart: the current process
+# becomes the foreground inside the new tmux pane via `exec`.
+#
+# Behavior:
+#   1. If $TMUX is set, we're already in a tmux session: no-op.
+#   2. If tmux is not installed, print a one-line hint and exit 0
+#      (Claude keeps running normally).
+#   3. Otherwise, exec into `tmux new-session -A -s claude-waiting-room`
+#      so the user lands inside the persistent session. If a session
+#      with that name already exists, -A attaches to it; otherwise it
+#      creates a new one. The session is shared across Claude launches
+#      so reopening Claude reconnects to the same tmux session.
+#
+# Contract: always exit 0. This is a SessionStart hook; we never want
+# to fail Claude's startup because the tmux auto-attach had a hiccup.
+#
+# This is the SessionStart hook's command (see packages/plugin-claude/
+# hooks/hooks.json). Strict POSIX sh. No bashisms.
+
+set -u
+
+TMUX_SESSION=${WR_TMUX_SESSION:-claude-waiting-room}
+WR_TTY=${WR_TTY:-/dev/tty}
+
+# 1. Already in a tmux session (incl. nested case from a re-fired hook).
+if [ -n "${TMUX:-}" ]; then
+    exit 0
+fi
+
+# 2. tmux missing. Soft-fail.
+if ! command -v tmux >/dev/null 2>&1; then
+    printf 'wr-attach: tmux not installed; side activities require tmux (brew install tmux).\n' >&2
+    exit 0
+fi
+
+# 3. tmux can't claim the TTY (rare: another program on /dev/tty).
+if [ ! -e "$WR_TTY" ]; then
+    printf 'wr-attach: %s not present; skipping tmux auto-attach.\n' "$WR_TTY" >&2
+    exit 0
+fi
+
+# 4. Resolve the current claude binary so the new tmux pane runs the
+# same thing (avoids "command not found" if PATH changed inside tmux).
+claude_bin=$(command -v claude 2>/dev/null || true)
+if [ -z "$claude_bin" ]; then
+    printf 'wr-attach: claude not found in PATH; skipping tmux auto-attach.\n' >&2
+    exit 0
+fi
+
+# 5. Hand the TTY to a fresh (or existing) tmux session. -A means
+# "attach if exists, else create". -d detaches any other client.
+# The new tmux server takes over this process's TTY; claude continues
+# running as the foreground process inside the new pane.
+exec tmux new-session -A -s "$TMUX_SESSION" -d -x 200 -y 50 \
+    "'$claude_bin' $*" \; attach-session -t "$TMUX_SESSION" \
+    >/dev/null 2>&1 || {
+    # If exec failed (e.g. tmux errored mid-handshake), warn and let
+    # Claude continue running in the user's original terminal.
+    printf 'wr-attach: tmux new-session failed; continuing in the current terminal.\n' >&2
+    exit 0
+}

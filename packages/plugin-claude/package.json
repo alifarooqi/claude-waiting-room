@@ -1,6 +1,6 @@
 {
   "name": "@waiting-room/plugin-claude",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Claude Code plugin that pauses side activities and snaps tmux focus back when Claude needs you. Daemon bootstraps on SessionStart, then /waiting-room:start launches games.",
   "license": "MIT",
   "type": "module",
@@ -10,11 +10,12 @@
     "skills",
     "bin/waiting-room",
     "bin/wr-launch",
+    "bin/wr-attach",
     "README.md"
   ],
   "scripts": {
     "build": "node -e \"console.log('plugin-claude: static manifest, nothing to compile')\"",
-    "lint": "node -e \"require('fs').accessSync('hooks/hooks.json'); require('fs').accessSync('skills/start/SKILL.md'); require('fs').accessSync('bin/waiting-room'); require('fs').accessSync('bin/wr-launch')\"",
+    "lint": "node -e \"require('fs').accessSync('hooks/hooks.json'); require('fs').accessSync('skills/start/SKILL.md'); require('fs').accessSync('bin/waiting-room'); require('fs').accessSync('bin/wr-launch'); require('fs').accessSync('bin/wr-attach')\"",
     "test": "echo \"no tests yet\"",
     "clean": "echo ok"
   },
