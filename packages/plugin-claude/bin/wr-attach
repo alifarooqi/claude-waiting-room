@@ -25,8 +25,13 @@ set -u
 TMUX_SESSION=${WR_TMUX_SESSION:-claude-waiting-room}
 WR_TTY=${WR_TTY:-/dev/tty}
 
-# 1. Already in a tmux session (incl. nested case from a re-fired hook).
-if [ -n "${TMUX:-}" ]; then
+# 1. Already in a tmux server. We ask the tmux server directly
+# (not the $TMUX env var), because `tmux new-session ... <command>`
+# can leave the spawned pane with $TMUX unset even though we're
+# inside a tmux server. `tmux display-message` succeeds iff the
+# current process is in a tmux-controlled pty; the `-F '#{pane_id}'`
+# flag suppresses the default status-line echo.
+if tmux display-message -p -F '#{pane_id}' >/dev/null 2>&1; then
     exit 0
 fi
 

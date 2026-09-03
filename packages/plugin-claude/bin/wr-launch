@@ -5,15 +5,21 @@
 #   wr-launch <game-name>
 #
 # Behavior:
-#   - If $TMUX is set: splits a new pane to the right of the current one,
-#     sends `waiting-room-<game>` into it, focuses the new pane, exits 0.
+#   - If running inside a tmux server: splits a new pane to the right of
+#     the current one, sends `waiting-room-<game>` into it, focuses the
+#     new pane, exits 0.
 #   - If not in tmux: prints a helpful hint to stderr and exits 0.
 #   - If the game isn't installed: prints the npm install hint to stderr
 #     in the new pane (so the user sees it), exits 0.
 #
 # Strict POSIX sh. Always exits 0 (Claude hooks must never error Claude).
-# Heuristic for tmux presence: $TMUX is set when Claude Code runs inside
-# a tmux session. This is set by tmux when it forks the pane process.
+#
+# tmux-presence detection: a previous version of this script checked the
+# `$TMUX` env var, but that env var is not reliably propagated to panes
+# created via `tmux new-session ... <command>` (the auto-attach path in
+# the SessionStart hook). We ask the tmux server directly instead: if
+# `tmux display-message -p -t '#{pane_id}'` succeeds, we're in a tmux
+# server. (This is also the same call we use later to read our pane id.)
 
 set -u
 
@@ -23,7 +29,15 @@ if [ -z "$game" ]; then
     exit 0
 fi
 
-if [ -z "${TMUX:-}" ]; then
+if ! command -v tmux >/dev/null 2>&1; then
+    printf 'wr-launch: tmux not installed\n' >&2
+    exit 0
+fi
+
+# Are we inside a tmux server? Ask the server directly. -F '#{pane_id}'
+# (vs the default) prevents the status-line echo bug.
+pane_id=$(tmux display-message -p -F '#{pane_id}' 2>/dev/null) || pane_id=
+if [ -z "$pane_id" ]; then
     # Not in tmux. Surface a hint to the user and let Claude continue.
     cat >&2 <<EOF
 wr-launch: not running inside a tmux session.
@@ -40,7 +54,8 @@ EOF
     exit 0
 fi
 
-# Detect the tmux server socket.
+# Detect the tmux server socket (used as -S for all subsequent tmux
+# calls so they go to the right server, not just our env's default).
 #
 # $TMUX format varies by OS (and even by tmux version):
 #   macOS tmux 3.x:    "/private/tmp/tmux-<uid>/default,<pid>,<pane_index>"
@@ -48,21 +63,16 @@ fi
 #
 # The socket path is everything before the FIRST comma. Everything after
 # is metadata we don't need (and the count of fields varies, so don't
-# try to parse them).
-tmux_sock=${TMUX%%,*}
-
-if ! command -v tmux >/dev/null 2>&1; then
-    printf 'wr-launch: tmux not installed\n' >&2
-    exit 0
+# try to parse them). $TMUX may be unset if tmux didn't propagate it;
+# in that case, fall back to whatever tmux info tells us.
+tmux_sock=
+if [ -n "${TMUX:-}" ]; then
+    tmux_sock=${TMUX%%,*}
 fi
-
-# Find the current pane id (used as the split anchor). `-F '#{pane_id}'`
-# is critical: without it, `display-message -p` echoes the status-line text
-# (which contains special chars and breaks subsequent greps).
-pane_id=$(tmux -S "$tmux_sock" display-message -p -F '#{pane_id}' 2>/dev/null) || pane_id=
-if [ -z "$pane_id" ]; then
-    printf 'wr-launch: cannot determine current tmux pane\n' >&2
-    exit 0
+# If we still don't have a socket, ask tmux itself (uses the default
+# server, which is "us" if we're inside it).
+if [ -z "$tmux_sock" ]; then
+    tmux_sock=$(tmux display-message -p -F '#{socket_path}' 2>/dev/null) || tmux_sock=
 fi
 
 # Check the game exists on PATH before opening a pane (so the user sees the
