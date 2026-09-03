@@ -25,8 +25,13 @@ set -u
 TMUX_SESSION=${WR_TMUX_SESSION:-claude-waiting-room}
 WR_TTY=${WR_TTY:-/dev/tty}
 
-# 1. Already in a tmux session (incl. nested case from a re-fired hook).
-if [ -n "${TMUX:-}" ]; then
+# 1. Already in a tmux server. We ask the tmux server directly
+# (not the $TMUX env var), because `tmux new-session ... <command>`
+# can leave the spawned pane with $TMUX unset even though we're
+# inside a tmux server. `tmux display-message` succeeds iff the
+# current process is in a tmux-controlled pty; the `-F '#{pane_id}'`
+# flag suppresses the default status-line echo.
+if tmux display-message -p -F '#{pane_id}' >/dev/null 2>&1; then
     exit 0
 fi
 
@@ -52,13 +57,18 @@ fi
 
 # 5. Hand the TTY to a fresh (or existing) tmux session. -A means
 # "attach if exists, else create". -d detaches any other client.
-# The new tmux server takes over this process's TTY; claude continues
-# running as the foreground process inside the new pane.
-exec tmux new-session -A -s "$TMUX_SESSION" -d -x 200 -y 50 \
-    "'$claude_bin' $*" \; attach-session -t "$TMUX_SESSION" \
-    >/dev/null 2>&1 || {
-    # If exec failed (e.g. tmux errored mid-handshake), warn and let
-    # Claude continue running in the user's original terminal.
+# Then `exec tmux attach-session` makes the user's TTY a tmux client
+# and shows the session. The earlier one-liner `tmux new-session ... \;
+# attach-session` looked like it would do both, but the `\;` runs
+# `attach-session` as a child of the new tmux server — which is
+# already attached to nothing — and the user's TTY is left without
+# a client. Splitting into two commands is what actually shows the
+# user a tmux status line in their original terminal.
+tmux new-session -A -s "$TMUX_SESSION" -d -x 200 -y 50 \
+    "'$claude_bin' $*" >/dev/null 2>&1 || {
+    # If new-session failed (e.g. tmux errored mid-handshake), warn and
+    # let Claude continue running in the user's original terminal.
     printf 'wr-attach: tmux new-session failed; continuing in the current terminal.\n' >&2
     exit 0
 }
+exec tmux attach-session -t "$TMUX_SESSION" </dev/null

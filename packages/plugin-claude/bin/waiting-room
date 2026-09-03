@@ -207,6 +207,9 @@ if [ -x "$bin" ]; then
             # stdin/stdout/stderr all redirected so the daemon's startup
             # banner (which goes to stdout) never appears in any captured pipe.
             # The log file is the user's diagnostic surface.
+            # Truncate the log (not append) so the file is always present
+            # after a launch — macOS `>>` on a non-existent file is a no-op.
+            : > "$log" 2>/dev/null || exit 0
             nohup "$bin" daemon </dev/null >>"$log" 2>&1 &
             exit 0
             ;;

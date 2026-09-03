@@ -5,25 +5,61 @@
 #   wr-launch <game-name>
 #
 # Behavior:
-#   - If $TMUX is set: splits a new pane to the right of the current one,
-#     sends `waiting-room-<game>` into it, focuses the new pane, exits 0.
+#   - If running inside a tmux server: splits a new pane to the right of
+#     the current one, sends `waiting-room-<game>` into it, focuses the
+#     new pane, exits 0.
 #   - If not in tmux: prints a helpful hint to stderr and exits 0.
 #   - If the game isn't installed: prints the npm install hint to stderr
 #     in the new pane (so the user sees it), exits 0.
 #
 # Strict POSIX sh. Always exits 0 (Claude hooks must never error Claude).
-# Heuristic for tmux presence: $TMUX is set when Claude Code runs inside
-# a tmux session. This is set by tmux when it forks the pane process.
+#
+# tmux-presence detection: a previous version of this script checked the
+# `$TMUX` env var, but that env var is not reliably propagated to panes
+# created via `tmux new-session ... <command>` (the auto-attach path in
+# the SessionStart hook). We ask the tmux server directly instead: if
+# `tmux display-message -p -t '#{pane_id}'` succeeds, we're in a tmux
+# server. (This is also the same call we use later to read our pane id.)
+#
+# Result output: a single line of JSON on fd 3. The skill (or any
+# caller) reads fd 3 to know exactly which pane was created and which
+# session/window it lives in, so the user can be told "look in pane
+# %5 of session claude-test, window 0" instead of vague prose. fd 3
+# is used so the human-readable hints on stderr don't compete with
+# machine-readable output on stdout.
+#   - ok=true:  game launched; pane/window/session are populated.
+#   - ok=false: a human hint went to stderr; reason names why.
+
+# Open fd 3 for the result line. If the parent didn't set it up, the
+# script writes its result to fd 1 instead (still the last line of
+# stdout, so callers can `tail -1` it). Either way, the result is the
+# last line of the script's output.
+exec 3>&1 2>/dev/null || exec 3>&1
 
 set -u
+
+# Helper: emit a JSON result line on fd 3 (or stdout if fd 3 closed).
+emit() {
+    printf '%s\n' "$1" >&3
+}
 
 game=$1
 if [ -z "$game" ]; then
     printf 'wr-launch: missing game name\n' >&2
+    emit "{\"ok\":false,\"reason\":\"missing-arg\"}"
     exit 0
 fi
 
-if [ -z "${TMUX:-}" ]; then
+if ! command -v tmux >/dev/null 2>&1; then
+    printf 'wr-launch: tmux not installed\n' >&2
+    emit "{\"ok\":false,\"reason\":\"no-tmux\"}"
+    exit 0
+fi
+
+# Are we inside a tmux server? Ask the server directly. -F '#{pane_id}'
+# (vs the default) prevents the status-line echo bug.
+pane_id=$(tmux display-message -p -F '#{pane_id}' 2>/dev/null) || pane_id=
+if [ -z "$pane_id" ]; then
     # Not in tmux. Surface a hint to the user and let Claude continue.
     cat >&2 <<EOF
 wr-launch: not running inside a tmux session.
@@ -37,10 +73,12 @@ To use side activities, restart Claude inside tmux:
 
 Then in Claude, run /waiting-room:start $game.
 EOF
+    emit "{\"ok\":false,\"reason\":\"not-in-tmux\"}"
     exit 0
 fi
 
-# Detect the tmux server socket.
+# Detect the tmux server socket (used as -S for all subsequent tmux
+# calls so they go to the right server, not just our env's default).
 #
 # $TMUX format varies by OS (and even by tmux version):
 #   macOS tmux 3.x:    "/private/tmp/tmux-<uid>/default,<pid>,<pane_index>"
@@ -48,32 +86,36 @@ fi
 #
 # The socket path is everything before the FIRST comma. Everything after
 # is metadata we don't need (and the count of fields varies, so don't
-# try to parse them).
-tmux_sock=${TMUX%%,*}
-
-if ! command -v tmux >/dev/null 2>&1; then
-    printf 'wr-launch: tmux not installed\n' >&2
-    exit 0
+# try to parse them). $TMUX may be unset if tmux didn't propagate it;
+# in that case, fall back to whatever tmux info tells us.
+tmux_sock=
+if [ -n "${TMUX:-}" ]; then
+    tmux_sock=${TMUX%%,*}
+fi
+# If we still don't have a socket, ask tmux itself (uses the default
+# server, which is "us" if we're inside it).
+if [ -z "$tmux_sock" ]; then
+    tmux_sock=$(tmux display-message -p -F '#{socket_path}' 2>/dev/null) || tmux_sock=
 fi
 
-# Find the current pane id (used as the split anchor). `-F '#{pane_id}'`
-# is critical: without it, `display-message -p` echoes the status-line text
-# (which contains special chars and breaks subsequent greps).
-pane_id=$(tmux -S "$tmux_sock" display-message -p -F '#{pane_id}' 2>/dev/null) || pane_id=
-if [ -z "$pane_id" ]; then
-    printf 'wr-launch: cannot determine current tmux pane\n' >&2
-    exit 0
-fi
+# Resolve session/window for the result (best-effort, may be empty).
+# `-F` selects the format, `-t` selects the target pane. Mixing them up
+# silently falls back to the status line.
+session_name=$(tmux -S "$tmux_sock" display-message -p -F '#{session_name}' -t "$pane_id" 2>/dev/null || true)
+window_index=$(tmux -S "$tmux_sock" display-message -p -F '#{window_index}' -t "$pane_id" 2>/dev/null || true)
 
 # Check the game exists on PATH before opening a pane (so the user sees the
 # install hint IN the new pane if it's missing, not after a confusing flash
 # of a crashed game).
 if ! command -v "waiting-room-$game" >/dev/null 2>&1; then
     tmux -S "$tmux_sock" split-window -h -t "$pane_id" 2>/dev/null
-    tmux -S "$tmux_sock" send-keys -t "{last}" \
+    new_pane=$(tmux -S "$tmux_sock" list-panes -F '#{pane_id}' 2>/dev/null \
+        | awk -v me="$pane_id" '$0 != me { print; exit }') || new_pane=
+    tmux -S "$tmux_sock" send-keys -t "$new_pane" \
         "printf 'wr-launch: %s is not installed.\\nTry: npm install -g @waiting-room/game-%s\\n' \"$game\" \"$game\"" \
         "C-m" 2>/dev/null || true
-    tmux -S "$tmux_sock" select-pane -t "{last}" 2>/dev/null || true
+    tmux -S "$tmux_sock" select-pane -t "$new_pane" 2>/dev/null || true
+    emit "{\"ok\":false,\"reason\":\"game-not-installed\",\"game\":\"$game\",\"pane\":\"$new_pane\",\"session\":\"$session_name\",\"window\":\"$window_index\"}"
     exit 0
 fi
 
@@ -85,9 +127,12 @@ tmux -S "$tmux_sock" split-window -dh -t "$pane_id" 2>/dev/null
 # current pane). Use `-F '#{pane_id}'` to avoid the status-line echo bug.
 new_pane=$(tmux -S "$tmux_sock" list-panes -F '#{pane_id}' 2>/dev/null \
     | awk -v me="$pane_id" '$0 != me { print; exit }') || new_pane=
-if [ -n "$new_pane" ]; then
-    tmux -S "$tmux_sock" send-keys -t "$new_pane" "waiting-room-$game" C-m 2>/dev/null || true
-    tmux -S "$tmux_sock" select-pane -t "$new_pane" 2>/dev/null || true
+if [ -z "$new_pane" ]; then
+    emit "{\"ok\":false,\"reason\":\"split-failed\",\"pane\":null,\"session\":\"$session_name\",\"window\":\"$window_index\"}"
+    exit 0
 fi
+tmux -S "$tmux_sock" send-keys -t "$new_pane" "waiting-room-$game" C-m 2>/dev/null || true
+tmux -S "$tmux_sock" select-pane -t "$new_pane" 2>/dev/null || true
+emit "{\"ok\":true,\"game\":\"$game\",\"pane\":\"$new_pane\",\"session\":\"$session_name\",\"window\":\"$window_index\"}"
 
 exit 0
