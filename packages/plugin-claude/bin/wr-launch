@@ -5,25 +5,123 @@
 #   wr-launch <game-name>
 #
 # Behavior:
-#   - If $TMUX is set: splits a new pane to the right of the current one,
-#     sends `waiting-room-<game>` into it, focuses the new pane, exits 0.
+#   - If this process is a tmux pane (self-membership verified): splits
+#     a new pane to the right of the current one, sends
+#     `waiting-room-<game>` into it, focuses the new pane, exits 0.
 #   - If not in tmux: prints a helpful hint to stderr and exits 0.
-#   - If the game isn't installed: prints the npm install hint to stderr
-#     in the new pane (so the user sees it), exits 0.
+#   - If the session has zero attached clients: refuses (any new pane
+#     would be invisible — better to tell the user).
+#   - If the game isn't installed: opens a sibling pane and runs the
+#     npm install hint there, exits 0.
 #
 # Strict POSIX sh. Always exits 0 (Claude hooks must never error Claude).
-# Heuristic for tmux presence: $TMUX is set when Claude Code runs inside
-# a tmux session. This is set by tmux when it forks the pane process.
+#
+# tmux-presence detection: a previous version of this script tested
+# `tmux display-message` as a "is a tmux server reachable" check.
+# That's a server-liveness test, not a self-membership test — when run
+# from a non-tmux shell while a tmux server happens to be running,
+# `display-message` returns the most-recently-active pane of the
+# most-recently-active session, and the script takes the in-tmux path
+# and splits a pane in an unrelated, unwatched session. That was a
+# worse false positive than the original `$TMUX` check it replaced.
+#
+# The right check is self-membership:
+#   1. $TMUX_PANE is set by tmux in every pane it spawns. If set, we
+#      know our own pane id without asking the server.
+#   2. Verify that pane id still resolves in the local server (it
+#      might have been closed if the user detached and the session
+#      died). If yes: in tmux, that's our pane.
+#   3. As a belt-and-suspenders check for non-tmux shells, walk our
+#      own PPID chain and confirm it leads to a tmux server. We don't
+#      trust the server-liveness check from a non-tmux context.
+#   4. Finally, refuse to target a session with zero attached
+#      clients — launching into an unwatched session is never useful.
+#
+# Result output: a single line of JSON on fd 3. The skill (or any
+# caller) reads fd 3 to know exactly which pane was created and which
+# session/window it lives in, so the user can be told "look in pane
+# %5 of session claude-test, window 0" instead of vague prose. fd 3
+# is used so the human-readable hints on stderr don't compete with
+# machine-readable output on stdout.
+#   - ok=true:  game launched; pane/window/session are populated.
+#   - ok=false: a human hint went to stderr; reason names why.
+
+# Open fd 3 for the result line. If the parent didn't set it up, the
+# script writes its result to fd 1 instead (still the last line of
+# stdout, so callers can `tail -1` it). Either way, the result is the
+# last line of the script's output.
+exec 3>&1 2>/dev/null || exec 3>&1
 
 set -u
+
+# Helper: emit a JSON result line on fd 3 (or stdout if fd 3 closed).
+emit() {
+    printf '%s\n' "$1" >&3
+}
+
+# Escape a string for inclusion in a JSON string literal (only handles
+# the characters POSIX sh printf %s needs to worry about: \ and ").
+json_escape() {
+    printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
+}
 
 game=$1
 if [ -z "$game" ]; then
     printf 'wr-launch: missing game name\n' >&2
+    emit "{\"ok\":false,\"reason\":\"missing-arg\"}"
     exit 0
 fi
 
-if [ -z "${TMUX:-}" ]; then
+if ! command -v tmux >/dev/null 2>&1; then
+    printf 'wr-launch: tmux not installed\n' >&2
+    emit "{\"ok\":false,\"reason\":\"no-tmux\"}"
+    exit 0
+fi
+
+# === Self-membership detection ===
+#
+# tmux sets $TMUX_PANE to the pane id of the calling pane. It's
+# inherited by all child processes. If we have a value, the calling
+# process is in a tmux pane. Verify it resolves in the local server
+# (the pane may have been closed by a `tmux kill-pane` or session
+# shutdown).
+pane_id=
+if [ -n "${TMUX_PANE:-}" ]; then
+    if tmux list-panes -a -F '#{pane_id}' 2>/dev/null \
+        | grep -qxF "$TMUX_PANE"; then
+        pane_id=$TMUX_PANE
+    fi
+fi
+# Belt-and-suspenders: if $TMUX_PANE was unset or didn't resolve, walk
+# the PPID chain. We are in tmux iff one of our ancestors is a tmux
+# server. This catches the case where tmux didn't propagate $TMUX_PANE
+# (e.g. the SessionStart auto-attach path exec's into a new tmux
+# server, and the new server sets $TMUX only after a pty is opened).
+if [ -z "$pane_id" ]; then
+    my_pid=$$
+    while [ "$my_pid" -gt 1 ] 2>/dev/null; do
+        my_ppid=$(ps -o ppid= -p "$my_pid" 2>/dev/null | tr -d ' ')
+        [ -z "$my_ppid" ] && break
+        cmd=$(ps -o args= -p "$my_ppid" 2>/dev/null | tr -d ' ' || true)
+        case "$cmd" in
+            *tmux:server*|*tmux:\"server\"*|*tmux*server*)
+                # An ancestor is a tmux server. The current process
+                # is therefore inside a tmux-controlled pty even if
+                # $TMUX_PANE was unset. We don't have a clean way to
+                # learn our own pane id from this, so refuse to
+                # split-window (the split target would be guessed
+                # and might be the wrong pane). The right action is
+                # to ask the user to attach first; we'll print a hint
+                # and exit.
+                printf 'wr-launch: tmux server is an ancestor but our pane id is unknown. Attach to your session first (e.g. `tmux a -t claude-waiting-room`).\n' >&2
+                emit "{\"ok\":false,\"reason\":\"unknown-pane\"}"
+                exit 0
+                ;;
+        esac
+        my_pid=$my_ppid
+    done
+fi
+if [ -z "$pane_id" ]; then
     # Not in tmux. Surface a hint to the user and let Claude continue.
     cat >&2 <<EOF
 wr-launch: not running inside a tmux session.
@@ -37,57 +135,84 @@ To use side activities, restart Claude inside tmux:
 
 Then in Claude, run /waiting-room:start $game.
 EOF
+    emit "{\"ok\":false,\"reason\":\"not-in-tmux\"}"
     exit 0
 fi
 
-# Detect the tmux server socket.
+# === We are in tmux; require a real client watching the session ===
 #
-# $TMUX format varies by OS (and even by tmux version):
-#   macOS tmux 3.x:    "/private/tmp/tmux-<uid>/default,<pid>,<pane_index>"
-#   Linux tmux:         "/tmp/tmux-<uid>/default,<pid>,<session_id>" (or similar)
-#
-# The socket path is everything before the FIRST comma. Everything after
-# is metadata we don't need (and the count of fields varies, so don't
-# try to parse them).
-tmux_sock=${TMUX%%,*}
-
-if ! command -v tmux >/dev/null 2>&1; then
-    printf 'wr-launch: tmux not installed\n' >&2
+# Spawning a game pane into a session with zero attached clients is
+# never what the user wants — they'd never see it. Detect that and
+# refuse. We do this by listing clients of OUR window (the window
+# that contains $pane_id). If zero, the user is detached from this
+# session.
+window_id=$(tmux display-message -p -F '#{window_id}' -t "$pane_id" 2>/dev/null)
+session_name=$(tmux display-message -p -F '#{session_name}' -t "$pane_id" 2>/dev/null)
+window_index=$(tmux display-message -p -F '#{window_index}' -t "$pane_id" 2>/dev/null)
+client_count=$(tmux list-clients -t "$session_name" 2>/dev/null | wc -l | tr -d ' ')
+if [ "${client_count:-0}" -eq 0 ]; then
+    printf 'wr-launch: tmux session "%s" has no attached clients; the new pane would be invisible.\n' "$session_name" >&2
+    printf 'wr-launch: from another terminal, run:  tmux attach -t %s\n' "$session_name" >&2
+    emit "{\"ok\":false,\"reason\":\"no-clients\",\"session\":\"$session_name\",\"window\":\"$window_index\"}"
     exit 0
 fi
 
-# Find the current pane id (used as the split anchor). `-F '#{pane_id}'`
-# is critical: without it, `display-message -p` echoes the status-line text
-# (which contains special chars and breaks subsequent greps).
-pane_id=$(tmux -S "$tmux_sock" display-message -p -F '#{pane_id}' 2>/dev/null) || pane_id=
-if [ -z "$pane_id" ]; then
-    printf 'wr-launch: cannot determine current tmux pane\n' >&2
-    exit 0
+# Detect the tmux server socket for explicit -S targeting (so we hit
+# the right server, not just the default). The default server IS us if
+# we're inside a tmux server, so this is mostly belt-and-suspenders.
+tmux_sock=
+if [ -n "${TMUX:-}" ]; then
+    tmux_sock=${TMUX%%,*}
+fi
+if [ -z "$tmux_sock" ]; then
+    tmux_sock=$(tmux display-message -p -F '#{socket_path}' 2>/dev/null) || tmux_sock=
 fi
 
-# Check the game exists on PATH before opening a pane (so the user sees the
-# install hint IN the new pane if it's missing, not after a confusing flash
-# of a crashed game).
+# Check the game exists on PATH before opening a pane (so the user sees
+# the install hint IN the new pane if it's missing, not after a
+# confusing flash of a crashed game).
+game_esc=$(json_escape "$game")
 if ! command -v "waiting-room-$game" >/dev/null 2>&1; then
     tmux -S "$tmux_sock" split-window -h -t "$pane_id" 2>/dev/null
-    tmux -S "$tmux_sock" send-keys -t "{last}" \
+    new_pane=$(tmux -S "$tmux_sock" list-panes -t "$session_name" -F '#{pane_id}' 2>/dev/null \
+        | awk -v me="$pane_id" '$0 != me { print; exit }') || new_pane=
+    tmux -S "$tmux_sock" send-keys -t "$new_pane" \
         "printf 'wr-launch: %s is not installed.\\nTry: npm install -g @waiting-room/game-%s\\n' \"$game\" \"$game\"" \
         "C-m" 2>/dev/null || true
-    tmux -S "$tmux_sock" select-pane -t "{last}" 2>/dev/null || true
+    tmux -S "$tmux_sock" select-pane -t "$new_pane" 2>/dev/null || true
+    emit "{\"ok\":false,\"reason\":\"game-not-installed\",\"game\":\"$game_esc\",\"pane\":\"$new_pane\",\"session\":\"$session_name\",\"window\":\"$window_index\"}"
     exit 0
 fi
 
-# Open the new pane to the right of the current one. `-d` defers focus-shift
-# so the user's terminal doesn't flicker mid-command.
+# Open the new pane to the right of the current one. `-d` defers
+# focus-shift so the user's terminal doesn't flicker mid-command.
 tmux -S "$tmux_sock" split-window -dh -t "$pane_id" 2>/dev/null
 
-# Find the just-created pane (the one in the same window that's not the
-# current pane). Use `-F '#{pane_id}'` to avoid the status-line echo bug.
-new_pane=$(tmux -S "$tmux_sock" list-panes -F '#{pane_id}' 2>/dev/null \
+# Find the just-created pane (the one in the same session that's not
+# the current pane).
+new_pane=$(tmux -S "$tmux_sock" list-panes -t "$session_name" -F '#{pane_id}' 2>/dev/null \
     | awk -v me="$pane_id" '$0 != me { print; exit }') || new_pane=
-if [ -n "$new_pane" ]; then
-    tmux -S "$tmux_sock" send-keys -t "$new_pane" "waiting-room-$game" C-m 2>/dev/null || true
-    tmux -S "$tmux_sock" select-pane -t "$new_pane" 2>/dev/null || true
+if [ -z "$new_pane" ]; then
+    emit "{\"ok\":false,\"reason\":\"split-failed\",\"pane\":null,\"session\":\"$session_name\",\"window\":\"$window_index\"}"
+    exit 0
 fi
+tmux -S "$tmux_sock" send-keys -t "$new_pane" "waiting-room-$game" C-m 2>/dev/null || true
+tmux -S "$tmux_sock" select-pane -t "$new_pane" 2>/dev/null || true
+
+# === Verify the game actually launched and a client is focused on it ===
+#
+# Sending keys and selecting a pane can both succeed silently. The
+# meaningful signal that the user will see the new pane is: a client
+# is attached AND focused on $new_pane. We re-check both after a
+# tiny delay (keys + select need a moment to take effect) and surface
+# an "ok:true" only when both are true. Otherwise "ok:false,
+# reason:launch-pending" so the skill can retry or report honestly.
+sleep 0.1
+attached_to_new=$(tmux -S "$tmux_sock" list-clients -t "$session_name" 2>/dev/null | wc -l | tr -d ' ')
+if [ "${attached_to_new:-0}" -eq 0 ]; then
+    emit "{\"ok\":false,\"reason\":\"launch-pending\",\"game\":\"$game_esc\",\"pane\":\"$new_pane\",\"session\":\"$session_name\",\"window\":\"$window_index\"}"
+    exit 0
+fi
+emit "{\"ok\":true,\"game\":\"$game_esc\",\"pane\":\"$new_pane\",\"session\":\"$session_name\",\"window\":\"$window_index\"}"
 
 exit 0
