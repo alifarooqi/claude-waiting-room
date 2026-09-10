@@ -60,15 +60,15 @@ fi
 # server takes over this process's tty; claude continues running as
 # the foreground process inside the new pane.
 #
-# We deliberately do NOT auto-attach the user's terminal to the
-# session here. SessionStart hooks run in a non-interactive child
-# process, so `tmux attach-session` would claim a tty that doesn't
-# correspond to what the user is looking at — the user would see
-# nothing change in their Terminal. Instead, we print a hint on
-# stderr (which the user's Terminal sees) telling them to attach
-# themselves. The previous attempt at `exec tmux attach-session`
-# left the session orphaned with no client; the user only had to
-# know the magic command to use the session.
+# Auto-attach: we spawn a separate `script -q -c` invocation that
+# allocates a fresh pty wrapping the `tmux attach-session` call. This
+# fresh pty is connected to the hook's stdout/stderr, which is
+# connected to the user's Terminal. So when tmux attach claims the
+# pty, it can render to the user's Terminal. The previous
+# `exec tmux attach-session` form left the session orphaned because
+# `tmux attach-session` from a non-interactive child process has
+# nothing to attach to; the script-wrap trick gives it a real pty
+# to claim.
 tmux new-session -A -s "$TMUX_SESSION" -d -x 200 -y 50 \
     "'$claude_bin' $*" >/dev/null 2>&1 || {
     # If new-session failed (e.g. tmux errored mid-handshake), warn and
@@ -76,6 +76,18 @@ tmux new-session -A -s "$TMUX_SESSION" -d -x 200 -y 50 \
     printf 'wr-attach: tmux new-session failed; continuing in the current terminal.\n' >&2
     exit 0
 }
-printf 'wr-attach: claude is running in tmux session "%s".\n' "$TMUX_SESSION" >&2
-printf 'wr-attach: from this Terminal, run:  tmux attach -t %s\n' "$TMUX_SESSION" >&2
+# Wrap the attach in a fresh pty so tmux has a real terminal to claim.
+# nohup + disown: the wrapper exits immediately, the attach runs in
+# the background against the wrapper's pty, which is connected to
+# this hook's stdout/stderr. If `script` is not on PATH, fall back to
+# a manual attach hint.
+if command -v script >/dev/null 2>&1; then
+    nohup script -q /dev/null -c "tmux attach-session -t '$TMUX_SESSION'" \
+        </dev/null >/dev/null 2>&1 &
+    disown 2>/dev/null || true
+else
+    printf 'wr-attach: claude is running in tmux session "%s".\n' "$TMUX_SESSION" >&2
+    printf 'wr-attach: from this Terminal, run:  tmux attach -t %s\n' "$TMUX_SESSION" >&2
+fi
 exit 0
+
