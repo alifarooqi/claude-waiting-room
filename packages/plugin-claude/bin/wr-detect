@@ -1,0 +1,47 @@
+#!/bin/sh
+# wr-detect — SessionStart hook: report, as one JSON line on stdout,
+# whether this Claude process is running inside a tmux pane.
+# SessionStart stdout is added to the model's context, so Claude can
+# suggest `wr` (the launcher shipped in @waiting-room/cli) when the
+# user asks for side activities but isn't in tmux.
+#
+# It detects ONLY — it never attaches. A hook is a child process with
+# captured pipes: it cannot take over the terminal Claude's TUI is
+# already rendering on, and a background `tmux attach` on /dev/tty
+# would race Claude for input and spray escape sequences over its UI.
+# tmux must own the terminal before Claude starts, which only the
+# process the user runs can arrange (see the `wr` launcher).
+#
+# Self-membership test, NOT server liveness: $TMUX_PANE is set by tmux
+# in every pane it spawns, and we confirm it still resolves in the
+# local server. `tmux display-message` is the wrong tool here — from a
+# non-tmux shell it happily targets the most-recently-active pane of
+# any running server and succeeds, a false positive (the bug that made
+# the v1.0.x wr-attach silently no-op whenever a tmux server existed).
+#
+# Contract: always exit 0 — a hook must never fail Claude's startup.
+# Strict POSIX sh. No bashisms.
+#
+# This is the SessionStart hook's first command (see
+# packages/plugin-claude/hooks/hooks.json).
+
+set -u
+
+if ! command -v tmux >/dev/null 2>&1; then
+    printf '{"wr_tmux":"no-tmux"}\n'
+    exit 0
+fi
+
+pane_id=
+if [ -n "${TMUX_PANE:-}" ]; then
+    if tmux list-panes -a -F '#{pane_id}' 2>/dev/null | grep -qxF "$TMUX_PANE"; then
+        pane_id=$TMUX_PANE
+    fi
+fi
+
+if [ -n "$pane_id" ]; then
+    printf '{"wr_tmux":"in-tmux","pane":"%s"}\n' "$pane_id"
+else
+    printf '{"wr_tmux":"not-in-tmux"}\n'
+fi
+exit 0
