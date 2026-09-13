@@ -5,7 +5,8 @@
   "license": "MIT",
   "type": "module",
   "bin": {
-    "waiting-room": "./bin/cli.js"
+    "waiting-room": "./bin/cli.js",
+    "wr": "./bin/wr"
   },
   "files": [
     "bin",

@@ -1,0 +1,66 @@
+#!/bin/sh
+# wr — start Claude inside a tmux session, so Waiting Room side
+# activities (Snake, math quiz, …) can split panes around it.
+#
+# Why a launcher and not a hook: a SessionStart hook is a child process
+# with captured pipes — it can never take over the terminal that
+# Claude's TUI is already rendering on, and a running process cannot be
+# moved into a tmux pane after the fact. tmux must own the terminal
+# BEFORE Claude starts, and only the process the user actually runs can
+# arrange that. (v1.0.x shipped an auto-attaching SessionStart hook;
+# see plugin-claude/bin/wr-detect's header for why it never could work.)
+#
+# Behavior:
+#   - already inside tmux ($TMUX set) → exec claude here, no nesting
+#   - tmux not installed              → exec claude, one-line note
+#   - otherwise                       → exec `tmux new-session -A -s
+#     claude-waiting-room "<quoted claude cmd>"`, handing this terminal
+#     to tmux before Claude's first paint. -A attaches to an existing
+#     session of that name (e.g. after a terminal crash) instead of
+#     creating a duplicate.
+#
+# The session name defaults to "claude-waiting-room"; override with
+# WR_TMUX_SESSION. Every argument is passed through to claude, safely
+# quoted (tmux runs the command string via sh -c inside the pane).
+#
+# Known wart: when the pane's claude exits, the exit code tmux returns
+# to the shell is tmux's own, not claude's.
+#
+# Strict POSIX sh. No bashisms.
+
+set -u
+
+session=${WR_TMUX_SESSION:-claude-waiting-room}
+
+claude_bin=$(command -v claude 2>/dev/null) || claude_bin=
+if [ -z "$claude_bin" ]; then
+    printf 'wr: claude not found on PATH\n' >&2
+    exit 1
+fi
+
+# 1. Already inside tmux: run claude here. Side-activity panes split
+#    the session we're in, which is exactly what the plugin wants.
+if [ -n "${TMUX:-}" ]; then
+    exec "$claude_bin" "$@"
+fi
+
+# 2. No tmux: plain claude. Side activities stay unavailable, but
+#    starting Claude is never blocked on an optional feature.
+if ! command -v tmux >/dev/null 2>&1; then
+    printf 'wr: tmux not installed; starting Claude without it (side activities disabled)\n' >&2
+    exec "$claude_bin" "$@"
+fi
+
+# 3. Build the command string tmux will run via sh -c in the new pane.
+#    Quote each word POSIX-safely: wrap in single quotes, escape any
+#    embedded single quote as '\'' — keeps `wr --foo "bar baz"` intact.
+quote() {
+    printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
+}
+cmd=$(quote "$claude_bin")
+for arg in "$@"; do
+    cmd="$cmd $(quote "$arg")"
+done
+
+# 4. Hand the terminal over. exec = no leftover wrapper process.
+exec tmux new-session -A -s "$session" "$cmd"
