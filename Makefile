@@ -46,8 +46,9 @@ fmt: ## Format Go (gofmt) + TS
 	-pnpm -r run fmt
 
 .PHONY: integration
-integration: ## Run real-tmux integration tests (requires tmux)
-	cd $(DAEMON_DIR) && go test -tags=integration ./...
+integration: ## Run end-to-end tests across Go + TS (formerly: real-tmux; v2 covers WS instead)
+	cd $(DAEMON_DIR) && go test ./...
+	pnpm -r run test
 
 .PHONY: clean
 clean: ## Remove build artifacts

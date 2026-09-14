@@ -5,7 +5,7 @@
 
 ## Context
 
-The daemon speaks IPC with two kinds of clients: the `emit` one-shot client (hook-driven) and long-lived activity clients (SDK). We need a wire format and transport for v1, with a planned future path to browser-based clients.
+The daemon speaks IPC with three kinds of clients: the `emit` one-shot client (hook-driven), long-lived activity clients (SDK over UDS, Node), and browser-based activity clients (SDK over WebSocket, browser). The wire format is transport-agnostic — every message is a self-contained JSON object, and one message = one text frame on either transport.
 
 ## Decision
 
@@ -15,7 +15,7 @@ The daemon speaks IPC with two kinds of clients: the `emit` one-shot client (hoo
 ## Alternatives considered
 
 - **Protobuf** — rejected for v1. Event volume is human-scale (a few events/minute), so size/speed wins are irrelevant. JSON-lines is debuggable with `nc -U … | jq`, needs no codegen, and is trivially portable. Protobuf can be swapped in later behind the `wire` package without touching the bus or sessions.
-- **WebSockets** — deferred. TUI clients need only a local socket. Because every message is a self-contained JSON object, a future WS gateway can bridge UDS↔WS (one message = one text frame) with **no message body changes** — this is why transport-agnosticism is preserved.
+- **WebSockets** — **shipping in v2.** v2's browser activities subscribe via the daemon's HTTP+WS listener; every message is one text frame. Because every message is a self-contained JSON object, the WS bridge carries messages verbatim with **no body changes** — this is why transport-agnosticism is preserved.
 
 ## Consequences
 

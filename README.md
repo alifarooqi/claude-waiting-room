@@ -1,8 +1,8 @@
 # Waiting Room
 
-> Pause side activities and snap focus back to the terminal the moment Claude Code needs you.
+> Pause side activities and snap focus back to Claude the moment it needs your input.
 
-**Waiting Room** detects when a Claude Code agentic-coding session is **busy** vs. when it **needs human attention**. While Claude works, you run a side activity (terminal mini-game, math quiz, …) in a sibling tmux pane; the instant Claude halts or needs input, the activity auto-pauses and **tmux focus snaps back to the Claude pane**.
+**Waiting Room** detects when a Claude Code agentic-coding session is **busy** vs. when it **needs human attention**. While Claude works, you run a side activity (browser Snake, math quiz, …); the instant Claude halts or needs input, the activity auto-pauses and **your terminal comes back to the foreground**.
 
 🚧 **Status:** pre-alpha, under active development. See the [roadmap](#roadmap).
 
@@ -15,17 +15,19 @@ Claude Code hooks ──(async)──> waiting-room emit ──UDS──> [ Go d
                                                               │
                                   ┌───────────────────────────┼───────────────────┐
                                   ▼                           ▼                   ▼
-                          session registry            event bus (pub/sub)    tmux controller
-                          (keyed by session_id)       (snapshot + stream)    (select-pane/…)
+                          session registry            event bus (pub/sub)    focus controller
+                          (keyed by session_id)       (snapshot + stream)    (osascript on macOS)
                                                               │
                                                               ▼
-                                            activity clients (SDK) ──> pause/resume
+                                            browser activities (SDK) ──> pause/resume
 ```
 
 - **Claude Code hooks** (shipped as a plugin) call a one-shot `waiting-room emit` client.
-- The **Go daemon** (Unix Domain Socket) keeps per-session state, broadcasts to activity clients, and drives **tmux focus**.
+- The **Go daemon** keeps per-session state, broadcasts to activity clients, and triggers **OS-level focus recovery**.
 - The **SDK** lets activity authors subscribe and react with `onPause()` / `onResume()`.
-- **Focus-switching is the daemon's job (tmux); pause/resume is the activity's job (SDK).**
+- **Focus recovery is the daemon's job; pause/resume is the activity's job.**
+
+The daemon speaks two transports: a **Unix Domain Socket** for the local `emit` / `watch` / `status` CLIs and SDK clients, and **HTTP + WebSocket** on `127.0.0.1` for browser-based activities. The protocol envelope is identical on both transports.
 
 Read the full design: [`docs/architecture.md`](docs/architecture.md).
 
@@ -33,23 +35,22 @@ Read the full design: [`docs/architecture.md`](docs/architecture.md).
 
 | Package | Lang | Description |
 | --- | --- | --- |
-| [`daemon`](daemon) | Go | The background IPC daemon + `emit`/`focus`/`status` CLI. |
-| [`@waiting-room/sdk`](packages/sdk) | TS | Activity developer SDK (`onPause`, `onResume`, `focusAgentTerminal`). |
-| [`@waiting-room/plugin-claude`](packages/plugin-claude) | TS | Claude Code plugin (`hooks/hooks.json`). |
+| `daemon` | Go | Background daemon (UDS + HTTP+WS) and CLI. |
+| [`@waiting-room/sdk`](packages/sdk) | TS | Activity developer SDK (`onPause`, `onResume`, `focusClaude`). |
+| [`@waiting-room/plugin-claude`](packages/plugin-claude) | TS | Claude Code plugin (`hooks/hooks.json`, slash skills). |
 | [`@waiting-room/cli`](packages/cli) | TS | Binary distribution wrapper. |
-| [`@waiting-room/game-snake`](packages/game-snake) | TS | Reference activity: terminal Snake. |
-| [`@waiting-room/exercise-math`](packages/exercise-math) | TS | Reference activity: math quiz. |
+| [`@waiting-room/game-snake`](packages/game-snake) | TS | Reference activity: Snake (Ink TUI + browser canvas). |
+| [`@waiting-room/exercise-math`](packages/exercise-math) | TS | Reference activity: math quiz (Ink TUI + browser DOM). |
 
 ## Develop
 
-**Prerequisites:** Go ≥ 1.23, Node ≥ 20, pnpm ≥ 10, tmux. (macOS: `brew install go node pnpm tmux`.)
+**Prerequisites:** Go ≥ 1.23, Node ≥ 20, pnpm ≥ 10. (macOS only for v2 focus recovery — Linux/Windows work for everything else but won't auto-focus the terminal.)
 
 ```bash
-make build      # build the Go binary (daemon/bin/waiting-room) + all TS packages
-make test       # Go + TS unit tests
-make lint       # go vet + TS typecheck
-make integration# real-tmux integration tests (requires tmux)
-make plugin-pack# cross-compile 4 platform binaries + vendor into plugin-claude
+make build       # Go binary + TS packages + browser bundles
+make test        # Go + TS unit tests
+make lint        # go vet + TS typecheck
+make plugin-pack # cross-compile 4 platform binaries + vendor into plugin-claude
 ```
 
 ## Try it
@@ -60,7 +61,7 @@ make plugin-pack# cross-compile 4 platform binaries + vendor into plugin-claude
 /plugin marketplace add alifarooqi/waiting-room-marketplace
 /plugin install waiting-room
 npm install -g @waiting-room/game-snake
-# inside Claude, in a tmux pane:
+# inside Claude:
 /waiting-room:start snake
 ```
 
@@ -68,7 +69,6 @@ npm install -g @waiting-room/game-snake
 
 ```bash
 make build
-# in a tmux pane:
 claude --plugin-dir packages/plugin-claude
 # The SessionStart hook will download the daemon on first launch.
 ```
@@ -81,11 +81,12 @@ See [`examples/writing-an-activity.md`](examples/writing-an-activity.md) for a m
 
 ## Security
 
-See [`docs/security-uds.md`](docs/security-uds.md) for the threat model, the peer-credential check, permissions, and the documented v1 limitations (multi-user hosts are out of scope).
+- [`docs/security-uds.md`](docs/security-uds.md) — peer-credential auth on the UDS socket, permissions, threat model.
+- [`docs/security-websocket.md`](docs/security-websocket.md) — localhost binding, Origin validation, no cross-origin writes.
 
 ## Architecture
 
-See [`docs/architecture.md`](docs/architecture.md) and the [ADR set](docs/adr/) for the design choices (polyglot monorepo, JSON-lines wire, tmux focus, zero external Go dependencies, …).
+See [`docs/architecture.md`](docs/architecture.md) and the [ADR set](docs/adr/) for the design choices (polyglot monorepo, transport-agnostic JSON-lines wire, OS-level focus controller, zero external Go dependencies, …).
 
 ## Releasing
 
@@ -96,11 +97,12 @@ See [`docs/releasing.md`](docs/releasing.md) for the cookbook. The repo has two 
 - [x] **M0** — Repo bootstrap
 - [x] **M1** — Wire + UDS server
 - [x] **M2** — Registry + bus + `emit`
-- [x] **M3** — Tmux controller + focus
+- [x] **M3** — Controller + focus (v1: tmux; v2: OS-level)
 - [x] **M4** — SDK (TS)
 - [x] **M5** — plugin-claude + CLI packaging
 - [x] **M6** — Reference activities (Snake, math)
 - [x] **M7** — Hardening + v1 release
+- [x] **v2** — Drop tmux, browser-based activities, dual-transport daemon
 
 ## License
 
