@@ -24,7 +24,7 @@ describe('activity (degraded mode)', () => {
     await new Promise((r) => setTimeout(r, 300));
     expect(fired).toBe(0);
 
-    await wr.focusAgentTerminal(); // no-op, resolves
+    await wr.focusClaude(); // no-op, resolves
     await wr.dispose(); // no-op, resolves
     await wr.dispose(); // idempotent
   }, 5000);

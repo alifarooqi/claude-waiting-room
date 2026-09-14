@@ -60,10 +60,10 @@ describe('activity (live daemon)', () => {
     await wr.dispose();
   }, 5000);
 
-  it('focusAgentTerminal sends a focus_request', async () => {
+  it('focusClaude sends a focus_request', async () => {
     const wr = await createActivity({ session: 'any', title: 'Focus Test' });
     await mock.waitFor((m) => m.type === 'subscribe' && m['title'] === 'Focus Test');
-    await wr.focusAgentTerminal();
+    await wr.focusClaude();
     await mock.waitFor((m) => m.type === 'focus_request');
     await wr.dispose();
   }, 5000);

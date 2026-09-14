@@ -4,6 +4,9 @@
  *   const wr = await createActivity({ session: 'auto', title: 'Snake' });
  *   wr.onPause(() => game.pause());   // Claude needs you
  *   wr.onResume(() => game.resume()); // Claude is working again
+ *
+ * The SDK auto-picks a transport: UDS when running in Node, WebSocket
+ * when running in a browser. The same envelope is used for both.
  */
 
 export {
@@ -38,7 +41,6 @@ export type {
 export { createActivity, daemonAlive } from './activity.js';
 export type { Activity, ActivityOptions, StateChangeInfo } from './activity.js';
 
-export { IpcClient } from './client.js';
-export type { ConnectionStatus, IpcClientOptions } from './client.js';
+export type { Transport, TransportOptions, ConnectionStatus } from './transport.js';
 
-export { socketCandidates, defaultSocketPath, infoFilePath } from './discover.js';
+export { socketCandidates, defaultSocketPath, infoFilePath, wsUrlFromInfo } from './discover.js';
