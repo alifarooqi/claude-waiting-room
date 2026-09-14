@@ -8,12 +8,14 @@ export interface FakeActivity extends Activity {
   _pause(): void;
   _resume(): void;
   _disconnect(): void;
+  _reconnect(): void;
 }
 
 export function fakeActivity(): FakeActivity {
   const pause: Array<() => void> = [];
   const resume: Array<() => void> = [];
   const disconnect: Array<() => void> = [];
+  const reconnect: Array<() => void> = [];
   const stateChange: Array<(s: AgentState, info: StateChangeInfo) => void> = [];
   let state: AgentState = 'unknown';
   let ready = false;
@@ -37,6 +39,9 @@ export function fakeActivity(): FakeActivity {
     onDisconnect(cb) {
       disconnect.push(cb);
     },
+    onReconnect(cb) {
+      reconnect.push(cb);
+    },
     focusAgentTerminal() {
       return Promise.resolve();
     },
@@ -53,6 +58,9 @@ export function fakeActivity(): FakeActivity {
     },
     _disconnect() {
       for (const cb of disconnect) cb();
+    },
+    _reconnect() {
+      for (const cb of reconnect) cb();
     },
   };
 }

@@ -28,6 +28,15 @@ export interface ActivityOptions {
   /** Human-readable label, surfaced in `waiting-room status`. */
   readonly title?: string;
   /**
+   * tmux pane this activity lives in. Unset (default): derived from
+   * $TMUX_PANE/$TMUX. `null`: subscribe **without** a tmux binding — for
+   * activities that aren't terminal panes (e.g. a web page served by a
+   * bridge process). Critical there: a bridge started by Claude's hook
+   * inherits Claude's $TMUX_PANE, and the daemon would otherwise focus
+   * that pane on resume as if the game lived in it.
+   */
+  readonly activityPane?: string | null;
+  /**
    * Auto-spawn the daemon when unreachable (default true, or
    * $WAITING_ROOM_NO_SPAWN=1 to disable). When spawning fails or is
    * disabled, the activity runs in degraded mode: callbacks never fire,
@@ -54,6 +63,12 @@ export interface Activity {
   onStateChange(cb: (state: AgentState, info: StateChangeInfo) => void): void;
   /** Fired when the connection to the daemon drops (activity keeps running). */
   onDisconnect(cb: () => void): void;
+  /**
+   * Fired when the connection to the daemon is re-established after a drop
+   * (a snapshot re-sync follows via onStateChange — but only if the state
+   * actually changed, so treat this as "connectivity restored").
+   */
+  onReconnect(cb: () => void): void;
   /** Imperatively focus the Claude pane (e.g. on quit). */
   focusAgentTerminal(): Promise<void>;
   /** Unsubscribe and close the socket. Safe to call multiple times. */
@@ -90,6 +105,7 @@ function liveActivity(
 ): Activity {
   const activityId = `${slug(title)}-${process.pid}-${randomUUID().slice(0, 8)}`;
   const bind = resolveBind(options);
+  const paneInfo = resolvePane(options);
 
   let state: AgentState = 'unknown';
   let disposed = false;
@@ -97,6 +113,8 @@ function liveActivity(
   const resumeCbs: Array<() => void> = [];
   const stateCbs: Array<(s: AgentState, info: StateChangeInfo) => void> = [];
   const disconnectCbs: Array<() => void> = [];
+  const reconnectCbs: Array<() => void> = [];
+  let everConnected = false;
 
   const client = new IpcClient({
     socketPath,
@@ -109,8 +127,8 @@ function liveActivity(
         mode: bind.mode,
         session_id: bind.sessionId,
         activity_id: activityId,
-        activity_pane: process.env['TMUX_PANE'] || undefined,
-        tmux_socket: tmuxSocketFromEnv() || undefined,
+        activity_pane: paneInfo.pane,
+        tmux_socket: paneInfo.socket,
         title,
       });
     },
@@ -130,6 +148,13 @@ function liveActivity(
     },
     onDisconnect: () => {
       for (const cb of disconnectCbs) cb();
+    },
+    onStatus: (status) => {
+      // The initial connect is not a "reconnect" — only surface recoveries.
+      if (status === 'connected') {
+        if (everConnected) for (const cb of reconnectCbs) cb();
+        everConnected = true;
+      }
     },
   });
   client.start();
@@ -163,6 +188,9 @@ function liveActivity(
     onDisconnect(cb) {
       disconnectCbs.push(cb);
     },
+    onReconnect(cb) {
+      reconnectCbs.push(cb);
+    },
     focusAgentTerminal() {
       client.send({ v: PROTOCOL_VERSION, type: 'focus_request' });
       return Promise.resolve();
@@ -184,6 +212,7 @@ function degradedActivity(): Activity {
     onResume() {},
     onStateChange() {},
     onDisconnect() {},
+    onReconnect() {},
     focusAgentTerminal() {
       return Promise.resolve();
     },
@@ -197,6 +226,16 @@ function resolveBind(options: ActivityOptions): { mode: 'auto' | 'any' | 'sessio
   const bind: BindMode = options.session ?? parseEnvSession() ?? 'auto';
   if (bind === 'auto' || bind === 'any') return { mode: bind };
   return { mode: 'session', sessionId: bind.session };
+}
+
+/** Resolve the tmux binding sent with `subscribe`. `activityPane: null`
+ *  means "not a terminal pane" — send neither field (see ActivityOptions). */
+function resolvePane(options: ActivityOptions): { pane?: string; socket?: string } {
+  const socket = tmuxSocketFromEnv() || undefined;
+  if (options.activityPane === null) return {};
+  const pane = options.activityPane ?? process.env['TMUX_PANE'];
+  if (!pane) return { socket };
+  return { pane, socket };
 }
 
 function parseEnvSession(): BindMode | undefined {

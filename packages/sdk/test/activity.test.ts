@@ -38,6 +38,36 @@ describe('activity (live daemon)', () => {
     await wr.dispose();
   }, 5000);
 
+  it('subscribes pane-less when activityPane is null, even inside tmux', async () => {
+    // A bridge process started by Claude's hook inherits Claude's tmux env;
+    // activityPane:null must override that so the daemon never binds the
+    // Claude pane to the activity.
+    process.env['TMUX_PANE'] = '%42';
+    process.env['TMUX'] = '/tmp/tmux-501/default,999';
+    try {
+      const wr = await createActivity({ session: 'any', title: 'Paneless Test', activityPane: null });
+      const sub = await mock.waitFor((m) => m.type === 'subscribe' && m['title'] === 'Paneless Test');
+      expect('activity_pane' in sub).toBe(false);
+      expect('tmux_socket' in sub).toBe(false);
+      await wr.dispose();
+    } finally {
+      delete process.env['TMUX_PANE'];
+      delete process.env['TMUX'];
+    }
+  }, 5000);
+
+  it('subscribes with the environment pane by default and an explicit pane when given', async () => {
+    const wr = await createActivity({ session: 'any', title: 'Env Pane Test' });
+    const sub = await mock.waitFor((m) => m.type === 'subscribe' && m['title'] === 'Env Pane Test');
+    expect('activity_pane' in sub).toBe(false); // no $TMUX_PANE in tests
+    await wr.dispose();
+
+    const wr2 = await createActivity({ session: 'any', title: 'Explicit Pane Test', activityPane: '%7' });
+    const sub2 = await mock.waitFor((m) => m.type === 'subscribe' && m['title'] === 'Explicit Pane Test');
+    expect(sub2['activity_pane']).toBe('%7');
+    await wr2.dispose();
+  }, 5000);
+
   it('fires onPause/onResume/onStateChange on transitions', async () => {
     const wr = await createActivity({ session: 'any', title: 'Transitions Test' });
     await mock.waitFor((m) => m.type === 'subscribe' && m['title'] === 'Transitions Test');
@@ -89,8 +119,10 @@ describe('activity (live daemon)', () => {
     await mock.waitFor((m) => m.type === 'subscribe' && m['title'] === 'Reconnect Test');
 
     let disconnects = 0;
+    let reconnects = 0;
     let paused = 0;
     wr.onDisconnect(() => disconnects++);
+    wr.onReconnect(() => reconnects++);
     wr.onPause(() => paused++);
 
     // Kill the "daemon"; the activity must keep running (no throw).
@@ -102,6 +134,8 @@ describe('activity (live daemon)', () => {
     const mock2 = new MockDaemon(sockPath);
     await mock2.start();
     await mock2.waitFor((m) => m.type === 'subscribe' && m['title'] === 'Reconnect Test', 4000);
+    await vi_waitUntil(() => reconnects === 1, 4000);
+    expect(disconnects).toBe(1); // the initial connect did not count as a reconnect
 
     // And state events flow again.
     mock2.broadcastState('needs_attention');
