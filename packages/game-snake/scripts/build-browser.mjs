@@ -29,11 +29,32 @@ await build({
   minify: true,
   sourcemap: false,
   jsx: 'automatic',
-  // Mark node:* builtins as external — they're only imported via the
-  // dynamic-import() path that runs in Node, never in the browser.
-  // esbuild's static analysis can't see that, so we explicitly tell it
-  // not to try to resolve them.
-  external: ['node:fs', 'node:os', 'node:path', 'node:net', 'node:crypto', 'node:child_process'],
+  // Mark node:* builtins AND the SDK's Node-only modules as external.
+  // The browser bundle never executes the Node transport path, so these
+  // imports are dead code — leaving them external prevents esbuild from
+  // pulling their source (and the Node builtins they reference) into
+  // the bundle. If the runtime ever does hit that path, it'll throw a
+  // meaningful "module not found" instead of silently running broken code.
+  external: [
+    'node:fs', 'node:os', 'node:path', 'node:net', 'node:crypto', 'node:child_process',
+    // SDK's Node-only modules — kept external so the browser bundle
+    // doesn't pull in node:net etc. via tree-shaking through them.
+    '@waiting-room/sdk/discover.js',
+    '@waiting-room/sdk/transport_ipc.js',
+    '@waiting-room/sdk/ensure.js',
+  ],
+  // Also treat string literals that match the Node-only modules as
+  // external (esbuild sees them through dynamic import paths even when
+  // they're in unreachable branches).
+  plugins: [
+    {
+      name: 'externalize-node-modules',
+      setup(build) {
+        build.onResolve({ filter: /^node:|^@waiting-room\/sdk\/(discover|transport_ipc|ensure)\.js$/ },
+          () => ({ path: 'external', external: true }));
+      },
+    },
+  ],
   define: {
     'process.env.NODE_ENV': '"production"',
   },

@@ -17,7 +17,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@waiting-room/sdk": "^1.0.0",
+    "@waiting-room/sdk": "workspace:*",
     "ink": "^5.1.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"

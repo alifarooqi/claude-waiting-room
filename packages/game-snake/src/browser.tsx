@@ -5,6 +5,7 @@
 import { createRoot } from 'react-dom/client';
 import { useEffect, useRef, useState } from 'react';
 import { createActivity } from '@waiting-room/sdk';
+import { browserPickTransport as pickTransport } from '@waiting-room/sdk/browser-transport';
 import {
   createInitialState,
   step,

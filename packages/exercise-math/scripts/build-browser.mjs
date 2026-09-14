@@ -24,7 +24,21 @@ await build({
   minify: true,
   sourcemap: false,
   jsx: 'automatic',
-  external: ['node:fs', 'node:os', 'node:path', 'node:net', 'node:crypto', 'node:child_process'],
+  external: [
+    'node:fs', 'node:os', 'node:path', 'node:net', 'node:crypto', 'node:child_process',
+    '@waiting-room/sdk/discover.js',
+    '@waiting-room/sdk/transport_ipc.js',
+    '@waiting-room/sdk/ensure.js',
+  ],
+  plugins: [
+    {
+      name: 'externalize-node-modules',
+      setup(build) {
+        build.onResolve({ filter: /^node:|^@waiting-room\/sdk\/(discover|transport_ipc|ensure)\.js$/ },
+          () => ({ path: 'external', external: true }));
+      },
+    },
+  ],
   define: {
     'process.env.NODE_ENV': '"production"',
   },
