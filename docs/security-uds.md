@@ -75,6 +75,34 @@ are out of scope.
 - [ ] Optional token auth (config-gated): reserved for v2 if/when shared
   hosts become a real use case.
 
+## Web bridge surface (`@waiting-room/web-bridge`)
+
+Web activities add a localhost HTTP endpoint to the picture
+(ADR-0004). The bridge — not the daemon — owns it:
+
+- **Loopback only.** The server binds `127.0.0.1` on an ephemeral port;
+  it is unreachable from the network.
+- **Random URL token.** Every route lives under `/t/<token>/` with a
+  fresh 128-bit base64url token per launch; anything else is a 403 with
+  an empty body. Knowing the URL is the capability — same trust boundary
+  as the launching user, and the token dies with the process.
+- **DNS-rebinding defense.** The `Host` header must be exactly
+  `127.0.0.1:<port>` or `localhost:<port>`; anything else is a 403 — a
+  rebinding page cannot read responses even if it guesses the port.
+- **No CORS headers, ever.** The page is same-origin by construction; a
+  remote origin gets no `Access-Control-Allow-*` and cannot read data.
+- **`Cache-Control: no-store`** on every response, including errors —
+  game URLs (and thus state) never land in caches.
+- **Static containment.** File serving resolves inside the game's bundle
+  directory; encoded traversal (`%2e%2e`) is rejected.
+- **No secrets in URLs beyond the token.** The SSE stream carries only
+  agent state (`working`/`needs_attention`/…) and a daemon-online flag.
+
+Residual risk accepted: any local process of the same user could probe
+ports for a live token. That user can already read the daemon socket
+(this is the single-user model); the bridge grants nothing beyond it.
+Multi-user hosts remain out of scope (see "optional token auth" below).
+
 ## Reporting
 
 File security issues at the GitHub Security tab (private disclosure) or
