@@ -63,6 +63,12 @@ export interface Activity {
   onStateChange(cb: (state: AgentState, info: StateChangeInfo) => void): void;
   /** Fired when the connection to the daemon drops (activity keeps running). */
   onDisconnect(cb: () => void): void;
+  /**
+   * Fired when the connection to the daemon is re-established after a drop
+   * (a snapshot re-sync follows via onStateChange — but only if the state
+   * actually changed, so treat this as "connectivity restored").
+   */
+  onReconnect(cb: () => void): void;
   /** Imperatively focus the Claude pane (e.g. on quit). */
   focusAgentTerminal(): Promise<void>;
   /** Unsubscribe and close the socket. Safe to call multiple times. */
@@ -107,6 +113,8 @@ function liveActivity(
   const resumeCbs: Array<() => void> = [];
   const stateCbs: Array<(s: AgentState, info: StateChangeInfo) => void> = [];
   const disconnectCbs: Array<() => void> = [];
+  const reconnectCbs: Array<() => void> = [];
+  let everConnected = false;
 
   const client = new IpcClient({
     socketPath,
@@ -141,6 +149,13 @@ function liveActivity(
     onDisconnect: () => {
       for (const cb of disconnectCbs) cb();
     },
+    onStatus: (status) => {
+      // The initial connect is not a "reconnect" — only surface recoveries.
+      if (status === 'connected') {
+        if (everConnected) for (const cb of reconnectCbs) cb();
+        everConnected = true;
+      }
+    },
   });
   client.start();
 
@@ -173,6 +188,9 @@ function liveActivity(
     onDisconnect(cb) {
       disconnectCbs.push(cb);
     },
+    onReconnect(cb) {
+      reconnectCbs.push(cb);
+    },
     focusAgentTerminal() {
       client.send({ v: PROTOCOL_VERSION, type: 'focus_request' });
       return Promise.resolve();
@@ -194,6 +212,7 @@ function degradedActivity(): Activity {
     onResume() {},
     onStateChange() {},
     onDisconnect() {},
+    onReconnect() {},
     focusAgentTerminal() {
       return Promise.resolve();
     },

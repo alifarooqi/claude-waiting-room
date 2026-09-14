@@ -119,8 +119,10 @@ describe('activity (live daemon)', () => {
     await mock.waitFor((m) => m.type === 'subscribe' && m['title'] === 'Reconnect Test');
 
     let disconnects = 0;
+    let reconnects = 0;
     let paused = 0;
     wr.onDisconnect(() => disconnects++);
+    wr.onReconnect(() => reconnects++);
     wr.onPause(() => paused++);
 
     // Kill the "daemon"; the activity must keep running (no throw).
@@ -132,6 +134,8 @@ describe('activity (live daemon)', () => {
     const mock2 = new MockDaemon(sockPath);
     await mock2.start();
     await mock2.waitFor((m) => m.type === 'subscribe' && m['title'] === 'Reconnect Test', 4000);
+    await vi_waitUntil(() => reconnects === 1, 4000);
+    expect(disconnects).toBe(1); // the initial connect did not count as a reconnect
 
     // And state events flow again.
     mock2.broadcastState('needs_attention');
