@@ -1,0 +1,147 @@
+#!/bin/sh
+# wr-open — launch a web activity (waiting-room-<game>) as a detached
+# bridge process, wait for its ready-line, and report the URL as JSON.
+#
+# Usage:
+#   wr-open <game> [session_id]
+#
+# Contract (same as the old wr-launch, kept for the skill):
+#   - ALWAYS exits 0 (a launcher must never error Claude).
+#   - The LAST stdout line is a JSON object describing the outcome.
+#   - Hints for the human go to stderr.
+#
+# What it does:
+#   1. checks the game binary exists on PATH,
+#   2. exports WAITING_ROOM_SESSION (binds the game to this Claude
+#      session) and WAITING_ROOM_TERMINAL_APP (macOS focus recovery:
+#      the .app bundle enclosing this process tree, so the bridge can
+#      foreground Claude's terminal when it needs you),
+#   3. spawns `waiting-room-<game>` detached, logging to the plugin's
+#      cache dir,
+#   4. polls the log for the ready-line JSON ({"ok":true,"url":...})
+#      for a few seconds,
+#   5. prints the result JSON on stdout.
+set -u
+
+# --- helpers -----------------------------------------------------------------
+
+# Walk the parent chain looking for a macOS .app bundle binary, so the
+# bridge can foreground the user's terminal when Claude needs attention.
+# /Applications/iTerm.app/Contents/MacOS/iTerm2 -> "iTerm". Best effort:
+# empty result means in-page attention effects only.
+detect_terminal_app() {
+    pid=$$
+    hops=0
+    while [ "$pid" -gt 1 ] && [ "$hops" -lt 20 ]; do
+        pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
+        [ -n "$pid" ] || return 0
+        comm=$(ps -o comm= -p "$pid" 2>/dev/null)
+        case "$comm" in
+            */Contents/MacOS/*)
+                app=${comm%/Contents/MacOS/*}
+                app=${app##*/}
+                [ -n "$app" ] && printf '%s' "$app"
+                return 0
+                ;;
+        esac
+        hops=$((hops + 1))
+    done
+    return 0
+}
+
+game=${1:-}
+sid=${2:-}
+
+# Resolve the plugin root (for the log dir), like bin/waiting-room does.
+if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
+    root=$CLAUDE_PLUGIN_ROOT
+else
+    dir=$(CDPATH='' cd -- "$(dirname -- "$0")" 2>/dev/null) && root=$(CDPATH='' cd -- "$dir/.." 2>/dev/null && pwd) || root=""
+fi
+cache=""
+if [ -n "$root" ]; then
+    cache=$root/bin/.wr-cache
+    mkdir -p "$cache" 2>/dev/null || cache=""
+fi
+
+# npm package name for install hints (math ships as exercise-math).
+case "$game" in
+    math) npm_pkg="@waiting-room/exercise-math" ;;
+    *)     npm_pkg="@waiting-room/game-$game" ;;
+esac
+
+if [ -z "$game" ]; then
+    printf '{"ok":false,"reason":"missing-arg","game":""}\n'
+    printf 'usage: wr-open <game> [session_id]\n' >&2
+    exit 0
+fi
+
+if ! command -v "waiting-room-$game" >/dev/null 2>&1; then
+    printf '{"ok":false,"reason":"game-not-installed","game":"%s"}\n' "$game"
+    printf 'wr-open: %s is not installed. Try: npm install -g %s\n' "waiting-room-$game" "$npm_pkg" >&2
+    exit 0
+fi
+
+# Only pass plausible session ids through to the child's environment.
+if [ -n "$sid" ]; then
+    case "$sid" in
+        *[!A-Za-z0-9_-]*)
+            printf '{"ok":false,"reason":"invalid-session-id","game":"%s"}\n' "$game"
+            printf 'wr-open: refusing to export a session id with shell-hostile characters.\n' >&2
+            exit 0
+            ;;
+        *)
+            export WAITING_ROOM_SESSION="$sid"
+            ;;
+    esac
+fi
+
+# macOS focus recovery: find the .app bundle up our process tree (we run
+# inside Claude, inside the user's terminal). Best effort — empty means
+# the bridge falls back to in-page attention effects only.
+term_app=$(detect_terminal_app 2>/dev/null)
+if [ -n "$term_app" ]; then
+    export WAITING_ROOM_TERMINAL_APP="$term_app"
+fi
+
+log=${cache:+$cache/web-}$game.log
+[ -n "$cache" ] || log=/tmp/waiting-room-web-$game.log
+: > "$log" 2>/dev/null || true
+
+nohup "waiting-room-$game" </dev/null >>"$log" 2>&1 &
+pid=$!
+
+# Poll for the ready-line JSON (~4s). Exit early if the child dies.
+line=""
+i=0
+while [ $i -lt 5 ]; do
+    line=$(grep '"ok":true' "$log" 2>/dev/null | tail -n 1)
+    [ -n "$line" ] && break
+    if ! kill -0 "$pid" 2>/dev/null; then
+        printf '{"ok":false,"reason":"launch-failed","game":"%s"}\n' "$game"
+        printf 'wr-open: waiting-room-%s exited immediately. Log tail:\n' "$game" >&2
+        tail -n 15 "$log" >&2 2>/dev/null
+        exit 0
+    fi
+    i=$((i + 1))
+    sleep 1
+done
+
+if [ -z "$line" ]; then
+    printf '{"ok":false,"reason":"launch-pending","game":"%s","pid":%s}\n' "$game" "$pid"
+    printf 'wr-open: still starting (pid %s); it will open a browser window when ready.\n' "$pid" >&2
+    printf 'wr-open: log: %s\n' "$log" >&2
+    exit 0
+fi
+
+url=$(printf '%s' "$line" | sed -n 's/.*"url":"\([^"]*\)".*/\1/p')
+opened=$(printf '%s' "$line" | sed -n 's/.*"opened":\([^,}]*\).*/\1/p')
+[ -n "$opened" ] || opened=false
+
+printf '{"ok":true,"game":"%s","url":"%s","opened":%s,"session":"%s","pid":%s}\n' \
+    "$game" "$url" "$opened" "$sid" "$pid"
+
+if [ "$opened" != true ]; then
+    printf 'wr-open: could not open a browser automatically — the user can open this URL by hand:\n  %s\n' "$url" >&2
+fi
+exit 0
