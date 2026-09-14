@@ -1,29 +1,33 @@
 {
   "name": "@waiting-room/exercise-math",
   "version": "1.0.1",
-  "description": "Multiple-choice math quiz — a Waiting Room reference activity.",
+  "description": "Math quiz as a Waiting Room web activity — plays in your browser, pauses when Claude needs you.",
   "license": "MIT",
   "type": "module",
   "bin": {
     "waiting-room-math": "./dist/index.js"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node scripts/build-web.mjs",
     "start": "node dist/index.js",
-    "lint": "tsc --noEmit -p tsconfig.json",
+    "lint": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
     "test:watch": "vitest",
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@waiting-room/sdk": "^1.0.0",
-    "ink": "^5.1.0",
-    "react": "^18.3.1"
+    "@waiting-room/web-bridge": "workspace:*",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
   },
   "devDependencies": {
     "@types/node": "^22",
     "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "@waiting-room/sdk": "workspace:*",
     "@waiting-room/tsconfig": "workspace:*",
+    "esbuild": "^0.25.0",
+    "jsdom": "^26.0.0",
     "typescript": "^5.6.0",
     "vitest": "^2.1.0"
   },
