@@ -133,6 +133,22 @@ describe('SSE stream', () => {
       sse.abort();
     }
   });
+
+  it('reports daemon offline from the start for degraded activities', async () => {
+    const degraded = { ...fakeActivity('unknown'), live: false } as FakeActivity;
+    const web2 = await startWebServer({ activity: degraded, staticDir });
+    try {
+      const sse = await openSse(web2.url);
+      try {
+        const snap = await sse.next();
+        expect(snap.data).toMatchObject({ state: 'unknown', daemon: false });
+      } finally {
+        sse.abort();
+      }
+    } finally {
+      await web2.close();
+    }
+  });
 });
 
 describe('lifecycle', () => {

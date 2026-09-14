@@ -35,6 +35,7 @@ export function fakeActivity(initial: AgentState = 'unknown'): FakeActivity {
     get state() {
       return state;
     },
+    live: true,
     onPause(cb) {
       pause.push(cb);
     },

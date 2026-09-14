@@ -55,6 +55,14 @@ export interface StateChangeInfo {
 export interface Activity {
   /** Current bound session state. */
   readonly state: AgentState;
+  /**
+   * Whether this activity talks to a live daemon (or is trying to).
+   * `false` in degraded mode: the daemon was unreachable and spawning
+   * was disabled/failed, so callbacks will never fire. UIs use this to
+   * show their "auto-pause unavailable" state honestly at startup —
+   * degraded mode never fires onDisconnect.
+   */
+  readonly live: boolean;
   /** Fired when state transitions to needs_attention (Claude halted / needs input). */
   onPause(cb: () => void): void;
   /** Fired when state transitions to working (Claude resumed). */
@@ -176,6 +184,7 @@ function liveActivity(
     get state() {
       return state;
     },
+    live: true,
     onPause(cb) {
       pauseCbs.push(cb);
     },
@@ -208,6 +217,7 @@ function liveActivity(
 function degradedActivity(): Activity {
   return {
     state: 'unknown',
+    live: false,
     onPause() {},
     onResume() {},
     onStateChange() {},
