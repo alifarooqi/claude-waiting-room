@@ -13,6 +13,7 @@ describe('activity (degraded mode)', () => {
   it('never throws and never fires callbacks without a daemon', async () => {
     const wr = await createActivity({ session: 'any', title: 'Lonely Game' });
     expect(wr.state).toBe('unknown');
+    expect(wr.live).toBe(false); // degraded mode is knowable, not silent
 
     let fired = 0;
     wr.onPause(() => fired++);

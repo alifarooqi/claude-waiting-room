@@ -59,7 +59,10 @@ export function startWebServer(options: WebServerOptions): Promise<WebServer> {
     let finished = false;
     let finishReason: WebExitReason | undefined;
     let closedPromise: Promise<void> | undefined;
-    let daemonOnline = true;
+    // Degraded SDK activity (daemon unreachable) never fires
+    // onDisconnect — seed the offline flag from its `live` marker so the
+    // page shows the honest "auto-pause unavailable" state at startup.
+    let daemonOnline = activity.live !== false;
     let firstConnectTimer: ReturnType<typeof setTimeout> | undefined;
     let idleTimer: ReturnType<typeof setTimeout> | undefined;
     let pingTimer: ReturnType<typeof setInterval> | undefined;
