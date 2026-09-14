@@ -1,126 +1,103 @@
 # Writing your own activity
 
-A "Waiting Room activity" is any program that subscribes to the daemon
-for Claude Code lifecycle events and reacts to them. The full SDK surface
-is in [`packages/sdk/src/index.ts`](../packages/sdk/src/index.ts); this
-doc walks through a minimal example and the design rules.
+A "Waiting Room activity" is a web page plus a tiny bridge process: the
+bridge subscribes to the daemon for Claude Code lifecycle events, serves
+your page on a local ephemeral URL, and opens the user's browser. The
+page reacts to Claude's state (pause/resume) and can ask the bridge to
+focus Claude's terminal or shut down.
+
+Everything you need ships in [`@waiting-room/web-bridge`](../packages/web-bridge).
+The reference implementations are
+[`game-snake`](../packages/game-snake) and [`exercise-math`](../packages/exercise-math).
 
 ## Minimal example
 
 ```ts
-// my-activity.ts
-import { createActivity } from '@waiting-room/sdk';
+// index.ts — the bridge (this is the whole server side)
+#!/usr/bin/env node
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+import { startWebActivity } from '@waiting-room/web-bridge';
 
-const wr = await createActivity({
-  session: 'auto',        // bind by tmux window topology (recommended)
+const web = await startWebActivity({
+  staticDir: join(dirname(fileURLToPath(import.meta.url)), 'web'),
   title: 'My Activity',   // surfaced in `waiting-room status`
 });
-
-wr.onPause(() => {
-  // Claude halted, or a permission prompt is pending.
-  stopMyGameLoop();
-  showOverlay('Claude needs you — focus will jump to Claude pane.');
-});
-
-wr.onResume(() => {
-  startMyGameLoop(); // Claude is back at work.
-});
-
-wr.onDisconnect(() => {
-  // Daemon unreachable: keep running, optionally show a banner.
-  showOverlay('Waiting Room daemon offline — auto-pause disabled.');
-});
-
-wr.onStateChange((state, info) => {
-  console.log(`session=${state} (from ${info.from}, reason=${info.reason})`);
-});
-
-// On quit, hand focus back to Claude so the next session can continue.
-process.on('SIGINT', async () => {
-  await wr.focusAgentTerminal();
-  await wr.dispose();
-  process.exit(0);
-});
+await web.done;           // resolves when the tab closes / user quits
+process.exit(0);
 ```
 
-Then run it inside a tmux pane (it'll bind to the Claude session in the
-same window):
+`staticDir` points at a directory containing `index.html` (+ your JS/CSS;
+esbuild is a fine way to bundle them — see `game-snake/scripts/build-web.mjs`).
 
-```bash
-node my-activity.ts
+```ts
+// app.ts — the browser side (bundle it into the page)
+import {
+  createBrowserClient,
+  primeUserGesture,
+  startAttention,
+  stopAttention,
+} from '@waiting-room/web-bridge/browser';
+
+const client = createBrowserClient({
+  onState: (state, daemonOnline) => {
+    setPaused(state === 'needs_attention');
+    setOffline(!daemonOnline);
+  },
+  onServerLost: () => showFarewell(),
+});
+
+// Unlock notification permission + audio on the first user gesture.
+window.addEventListener('pointerdown', primeUserGesture, { once: true });
+
+// "Claude needs you" effects: title flash, red favicon, notification,
+// beep — each degrades independently; call them on the pause transition.
+watchPauseTransition(
+  (paused) => (paused ? startAttention() : stopAttention()));
+
+// Buttons:
+await client.focusClaude(); // bring Claude's terminal forward, keep playing
+await client.quit();        // same, then shut the bridge down
 ```
+
+Ship it with a `bin` named `waiting-room-<game>` and the plugin's
+`wr-open <game>` will find it on `PATH`, bind it to the current Claude
+session, and launch it detached. That's the whole convention.
 
 ## Design rules
 
-1. **Never throw on connection failure.** The SDK is designed to degrade
-   silently when the daemon is unreachable — your activity must keep
-   running with callbacks inert. Use `onDisconnect` to surface the
-   situation in the UI, not a thrown exception.
+1. **Never throw on daemon trouble.** A missing/offline daemon means "no
+   auto-pause", not "crash": the bridge serves the page anyway, the page
+   shows an offline note, and everything else works. (The SDK's degraded
+   mode already guarantees the callbacks simply never fire.)
+2. **Treat states as absolute.** `needs_attention` fully defines paused;
+   `working` fully defines running. Don't count transitions — react to
+   levels, so a missed event self-heals on the next one (the bridge's
+   15 s state pings also resync you).
+3. **Retain state across reconnects.** The SSE stream reconnects
+   automatically (2 s retry) and starts with a snapshot; your page should
+   render purely from `(state, daemonOnline)` so any reconnect is a no-op
+   visually.
+4. **Degrade every attention effect independently.** Notification
+   permission denied? Title still flashes. No audio until a gesture? The
+   banner still shows. Never let one effect's absence break another —
+   `startAttention()` already follows this rule; keep your own additions
+   to it.
+5. **Be honest about focus.** A web page cannot steal keyboard focus;
+   the bridge foregrounds Claude's terminal (macOS, best effort) and the
+   notification/title/favicon are the page's half. Build your "back to
+   Claude" affordance on `client.focusClaude()` — never on tricks.
+6. **Exit cleanly.** The bridge owns its lifecycle: `POST quit`, tab
+   close (idle ~30 s), or first-connect timeout (60 s) all dispose the
+   SDK subscription and close the server. Don't fight it — hook into
+   `web.done` if you need cleanup.
 
-2. **Retain last-known state across disconnects.** If Claude needed you
-   when the daemon dropped, the SDK keeps `state` as `needs_attention`
-   (don't auto-resume when the connection returns — wait for a fresh
-   state event). The SDK already does this for you; just don't reset it
-   yourself.
+## Testing
 
-3. **Use `auto` binding unless you have a reason.** It binds to the
-   Claude session sharing your tmux window — which is exactly what you
-   want when your activity lives next to Claude in the same split.
-   Use `'any'` if you want to react to every session (uncommon),
-   `{ session: '<id>' }` if you want to bind explicitly.
-
-4. **Set `title`.** It shows up in `waiting-room status` and in the
-   `bound_activities` field of the session table — invaluable when
-   debugging which activity is which.
-
-5. **Report your pane + socket on subscribe.** The SDK does this
-   automatically from `$TMUX` / `$TMUX_PANE` env, which are inherited
-   when you launch from inside a tmux pane. If you launch elsewhere,
-   set `spawnDaemon: false` and `activity_pane` explicitly on the
-   wire (advanced).
-
-6. **Hand focus back on quit.** Call `wr.focusAgentTerminal()` in your
-   SIGINT handler. If you don't, the user is left staring at a dead
-   activity pane after they exit.
-
-7. **Don't block on `onPause`/`onResume` work.** The callbacks are
-   synchronous from your perspective, but the daemon runs them via its
-   own goroutine — keep them quick. Heavy work should be debounced or
-   scheduled.
-
-## Advanced: imperative focus
-
-The SDK exposes `wr.focusAgentTerminal()` for one-off focus requests
-(e.g. a "back to Claude" button). This goes through the daemon's
-`focus_request` message and uses the same tmux topology rules as
-state-driven focus.
-
-## Testing activities
-
-Use the same vitest pattern as `@waiting-room/game-snake`:
-- Render with `ink-testing-library` (or your own ink harness — see
-  `packages/game-snake/test/ink-render.ts` for a minimal one).
-- Stub the `Activity` with a fake that records `_pause()`,
-  `_resume()`, `_disconnect()` (see `fake-activity.ts`).
-- Wait for both the first frame *and* callback registration (`_ready`)
-  before firing fake events — otherwise the cold-scheduler race
-  silently drops your first callback.
-
-## End-to-end test against a real daemon
-
-```bash
-# in tmux, split a pane:
-tmux new -s demo -d
-tmux split-window -h -t demo
-
-# in the right pane:
-./daemon/bin/waiting-room daemon &
-node ./dist/my-activity.js
-
-# in the left pane:
-WAITING_ROOM_SOCKET=$XDG_RUNTIME_DIR/waiting-room/daemon.sock \
-  TMUX=$TMUX TMUX_PANE=%0 \
-  ./daemon/bin/waiting-room emit agent_working --session my-test
-
-# expect: focus jumps to your activity pane, onPause fires
-```
+- Keep your game logic pure (no React, no I/O) and unit-test it directly
+  (see `game.ts` / `math.ts` and their tests).
+- Render your page in jsdom against a fake client — drive
+  `agentState`/`daemonOnline` props like `test/web-ui.test.tsx` does in
+  both reference games; no browser or daemon needed.
+- The bridge itself (`@waiting-room/web-bridge`) is covered by its own
+  suite; you shouldn't need to re-test SSE mechanics.
