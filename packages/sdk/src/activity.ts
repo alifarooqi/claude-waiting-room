@@ -28,6 +28,15 @@ export interface ActivityOptions {
   /** Human-readable label, surfaced in `waiting-room status`. */
   readonly title?: string;
   /**
+   * tmux pane this activity lives in. Unset (default): derived from
+   * $TMUX_PANE/$TMUX. `null`: subscribe **without** a tmux binding — for
+   * activities that aren't terminal panes (e.g. a web page served by a
+   * bridge process). Critical there: a bridge started by Claude's hook
+   * inherits Claude's $TMUX_PANE, and the daemon would otherwise focus
+   * that pane on resume as if the game lived in it.
+   */
+  readonly activityPane?: string | null;
+  /**
    * Auto-spawn the daemon when unreachable (default true, or
    * $WAITING_ROOM_NO_SPAWN=1 to disable). When spawning fails or is
    * disabled, the activity runs in degraded mode: callbacks never fire,
@@ -90,6 +99,7 @@ function liveActivity(
 ): Activity {
   const activityId = `${slug(title)}-${process.pid}-${randomUUID().slice(0, 8)}`;
   const bind = resolveBind(options);
+  const paneInfo = resolvePane(options);
 
   let state: AgentState = 'unknown';
   let disposed = false;
@@ -109,8 +119,8 @@ function liveActivity(
         mode: bind.mode,
         session_id: bind.sessionId,
         activity_id: activityId,
-        activity_pane: process.env['TMUX_PANE'] || undefined,
-        tmux_socket: tmuxSocketFromEnv() || undefined,
+        activity_pane: paneInfo.pane,
+        tmux_socket: paneInfo.socket,
         title,
       });
     },
@@ -197,6 +207,16 @@ function resolveBind(options: ActivityOptions): { mode: 'auto' | 'any' | 'sessio
   const bind: BindMode = options.session ?? parseEnvSession() ?? 'auto';
   if (bind === 'auto' || bind === 'any') return { mode: bind };
   return { mode: 'session', sessionId: bind.session };
+}
+
+/** Resolve the tmux binding sent with `subscribe`. `activityPane: null`
+ *  means "not a terminal pane" — send neither field (see ActivityOptions). */
+function resolvePane(options: ActivityOptions): { pane?: string; socket?: string } {
+  const socket = tmuxSocketFromEnv() || undefined;
+  if (options.activityPane === null) return {};
+  const pane = options.activityPane ?? process.env['TMUX_PANE'];
+  if (!pane) return { socket };
+  return { pane, socket };
 }
 
 function parseEnvSession(): BindMode | undefined {
