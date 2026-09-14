@@ -1,0 +1,29 @@
+#!/bin/sh
+# wr-session — SessionStart hook: tell Claude its own session_id so the
+# skill can bind a side activity to THIS session.
+#
+# Reads the hook JSON payload from stdin and prints the documented
+# hookSpecificOutput shape (additionalContext lands in Claude's context).
+# Always exits 0; never blocks (10ms of work); no stdin → no context.
+set -u
+
+# Manual/interactive runs (no piped payload): don't hang on stdin.
+if [ -t 0 ]; then
+    exit 0
+fi
+
+payload=$(cat 2>/dev/null) || exit 0
+
+# Extract "session_id" without jq (POSIX sed; ids are UUID-ish tokens).
+sid=$(printf '%s' "$payload" | sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)
+if [ -z "$sid" ]; then
+    exit 0
+fi
+
+# Basic sanity: session ids are UUID/hex-ish tokens, never shell junk.
+case "$sid" in
+    *[!A-Za-z0-9_-]*) exit 0 ;;
+esac
+
+printf '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"waiting-room session_id: %s (pass this to wr-open to bind a side activity to this Claude session)"}}\n' "$sid"
+exit 0

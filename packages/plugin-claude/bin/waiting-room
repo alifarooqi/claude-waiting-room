@@ -206,7 +206,9 @@ if [ -x "$bin" ]; then
             # `nohup` is POSIX and present on every Unix Claude runs on.
             # stdin/stdout/stderr all redirected so the daemon's startup
             # banner (which goes to stdout) never appears in any captured pipe.
-            # The log file is the user's diagnostic surface.
+            # The log file is the user's diagnostic surface; truncate on
+            # each start so it never grows unbounded across sessions.
+            : > "$log" 2>/dev/null || true
             nohup "$bin" daemon </dev/null >>"$log" 2>&1 &
             exit 0
             ;;
