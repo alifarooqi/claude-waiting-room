@@ -14,7 +14,6 @@ func TestEmitRoundTrip(t *testing.T) {
 		SessionID: "s1",
 		Seq:       42,
 		TS:        time.Now().UTC(),
-		TmuxPane:  "%5",
 		Meta:      map[string]any{"hook": "UserPromptSubmit"},
 	}
 	b, err := Encode(msg)
@@ -33,7 +32,7 @@ func TestEmitRoundTrip(t *testing.T) {
 	if !ok {
 		t.Fatalf("wrong type %T", got)
 	}
-	if m.Event != EventAgentWorking || m.SessionID != "s1" || m.Seq != 42 || m.TmuxPane != "%5" {
+	if m.Event != EventAgentWorking || m.SessionID != "s1" || m.Seq != 42 {
 		t.Fatalf("field mismatch: %+v", m)
 	}
 	if m.Meta["hook"] != "UserPromptSubmit" {

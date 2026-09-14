@@ -5,34 +5,20 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alifarooqi/claude-waiting-room/daemon/internal/tmux"
+	"github.com/alifarooqi/claude-waiting-room/daemon/internal/focus"
 	"github.com/alifarooqi/claude-waiting-room/daemon/internal/wire"
 )
 
-func TestJanitorSweepsStaleDeadPane(t *testing.T) {
-	// Tmux knows only %c — %a (the registered pane) is gone.
-	ctrl := tmux.NewShell("")
-	// We can't shell out for unit tests; build a real controller with no
-	// panes (so anything we ask about is missing) by using the production
-	// shell and skipping when tmux isn't available. For this test we just
-	// use the NewShell controller with an empty tmux server: list-panes
-	// returns nothing, so every registered pane is "dead".
-	if _, err := ctrl.ListPanes(); err != nil {
-		// No tmux server running: skip (the janitor's no-tmux branch is
-		// covered by TestJanitorKeepsFreshSessions).
-		t.Skip("no tmux server available for the dead-pane test")
-	}
-
-	core := NewCore("test", log.New(nil, "", 0), func(string) tmux.Controller { return ctrl })
+func TestJanitorSweepsStaleIdle(t *testing.T) {
+	core := NewCore("test", log.New(nil, "", 0), focus.Noop{})
 	core.reg.Apply(&wire.EmitMessage{
 		Envelope: wire.Env("emit"), Event: wire.EventAgentWorking,
 		SessionID: "s1", Seq: 1, TS: time.Now().UTC(),
-		TmuxPane: "%a", // registered; tmux says it doesn't exist
 	})
 	core.reg.SetLastEventAtForTest("s1", time.Now().Add(-10*time.Minute))
 
-	j := NewJanitor(core.reg, core.bus, func(string) tmux.Controller { return ctrl })
-	j.SetTimings(0, 5*time.Minute) // honor our manual LastEventAt rewind
+	j := NewJanitor(core.reg, core.bus)
+	j.SetTimings(0, 5*time.Minute)
 	if got := j.Sweep(); got != 1 {
 		t.Fatalf("Sweep reaped %d, want 1", got)
 	}
@@ -43,16 +29,12 @@ func TestJanitorSweepsStaleDeadPane(t *testing.T) {
 }
 
 func TestJanitorKeepsFreshSessions(t *testing.T) {
-	ctrl := tmux.NewShell("")
-	if _, err := ctrl.ListPanes(); err != nil {
-		t.Skip("no tmux server available")
-	}
-	core := NewCore("test", log.New(nil, "", 0), func(string) tmux.Controller { return ctrl })
+	core := NewCore("test", log.New(nil, "", 0), focus.Noop{})
 	core.reg.Apply(&wire.EmitMessage{
 		Envelope: wire.Env("emit"), Event: wire.EventAgentWorking,
-		SessionID: "fresh", Seq: 1, TS: time.Now().UTC(), TmuxPane: "%0",
+		SessionID: "fresh", Seq: 1, TS: time.Now().UTC(),
 	})
-	j := NewJanitor(core.reg, core.bus, func(string) tmux.Controller { return ctrl })
+	j := NewJanitor(core.reg, core.bus)
 	j.SetTimings(0, 5*time.Minute)
 	if got := j.Sweep(); got != 0 {
 		t.Fatalf("Sweep reaped %d fresh sessions, want 0", got)

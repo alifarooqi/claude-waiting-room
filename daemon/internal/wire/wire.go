@@ -1,6 +1,6 @@
 // Package wire defines the Waiting Room wire protocol: versioned JSON
-// envelopes exchanged as JSON-lines over a Unix Domain Socket (and, in the
-// future, as text frames over a WebSocket gateway with no body changes).
+// envelopes exchanged as JSON-lines over a Unix Domain Socket or as text
+// frames over a WebSocket gateway (no body changes between transports).
 //
 // This file is the Go mirror of packages/sdk/src/protocol.ts — keep the two
 // in sync. Field names are snake_case to match the TypeScript definitions.
@@ -65,14 +65,11 @@ func Env(typ string) Envelope { return Envelope{V: Version, Type: typ} }
 // EmitMessage is a lifecycle declaration from a Claude Code hook.
 type EmitMessage struct {
 	Envelope
-	Event       string         `json:"event"`
-	SessionID   string         `json:"session_id"`
-	Seq         int64          `json:"seq"`
-	TS          time.Time      `json:"ts"`
-	TmuxPane    string         `json:"tmux_pane,omitempty"`
-	TmuxSession string         `json:"tmux_session,omitempty"`
-	TmuxSocket  string         `json:"tmux_socket,omitempty"`
-	Meta        map[string]any `json:"meta,omitempty"`
+	Event     string         `json:"event"`
+	SessionID string         `json:"session_id"`
+	Seq       int64          `json:"seq"`
+	TS        time.Time      `json:"ts"`
+	Meta      map[string]any `json:"meta,omitempty"`
 }
 
 // AckMessage acknowledges an emit (or subscribe) request.
@@ -89,12 +86,10 @@ type AckMessage struct {
 // SubscribeMessage registers an activity's interest in session state.
 type SubscribeMessage struct {
 	Envelope
-	Mode         string `json:"mode"` // "auto" | "any" | "session"
-	SessionID    string `json:"session_id,omitempty"`
-	ActivityID   string `json:"activity_id"`
-	ActivityPane string `json:"activity_pane,omitempty"`
-	TmuxSocket   string `json:"tmux_socket,omitempty"`
-	Title        string `json:"title,omitempty"`
+	Mode       string `json:"mode"` // "auto" | "any" | "session"
+	SessionID  string `json:"session_id,omitempty"`
+	ActivityID string `json:"activity_id"`
+	Title      string `json:"title,omitempty"`
 }
 
 // UnsubscribeMessage removes a subscription.
@@ -157,17 +152,14 @@ type ErrorMessage struct {
 type PingMessage struct{ Envelope }
 type PongMessage struct{ Envelope }
 
-// FocusRequestMessage asks the daemon to imperatively focus the bound
-// session's Claude pane (used by an activity quitting, or the SDK's
-// focusAgentTerminal()).
+// FocusRequestMessage asks the daemon to imperatively focus the user's
+// terminal (used by an activity quitting, or the SDK's focusClaude()).
 type FocusRequestMessage struct{ Envelope }
 
 // SessionStatus is one entry in a StatusResponseMessage.
 type SessionStatus struct {
 	SessionID       string    `json:"session_id"`
 	State           State     `json:"state"`
-	TmuxPane        string    `json:"tmux_pane,omitempty"`
-	TmuxSession     string    `json:"tmux_session,omitempty"`
 	BoundActivities []string  `json:"bound_activities,omitempty"`
 	LastEventAt     time.Time `json:"last_event_at"`
 }

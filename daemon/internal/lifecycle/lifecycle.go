@@ -24,8 +24,17 @@ var ErrAlreadyRunning = errors.New("waiting-room: another daemon is already runn
 type Info struct {
 	PID        int       `json:"pid"`
 	SocketPath string    `json:"socket_path"`
-	Version    string    `json:"version"`
-	StartedAt  time.Time `json:"started_at"`
+	// WebURL is the http:// base for browser-side activities (e.g.
+	// "http://127.0.0.1:52131/"). Empty when the web listener is off.
+	WebURL string `json:"web_url,omitempty"`
+	// WSURL is the ws:// endpoint for browser WebSocket subscribers
+	// (e.g. "ws://127.0.0.1:52131/ws"). Empty when the web listener is off.
+	WSURL string `json:"ws_url,omitempty"`
+	// WebGamesDir is the on-disk directory of installed game bundles,
+	// served under WebURL/<game>/. Empty when the web listener is off.
+	WebGamesDir string `json:"web_games_dir,omitempty"`
+	Version     string    `json:"version"`
+	StartedAt   time.Time `json:"started_at"`
 }
 
 // ReadInfo loads a daemon.info file. A missing file is an error.

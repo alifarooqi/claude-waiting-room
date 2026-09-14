@@ -29,9 +29,6 @@ type Sub struct {
 	// BoundSession is the resolved session id this subscription follows.
 	// Empty means "follow everything" (unbound auto, or explicit any).
 	BoundSession string
-	// ActivityPane is the tmux pane the activity runs in (used by the
-	// daemon to refocus the activity when Claude resumes working).
-	ActivityPane string
 	// ActivityID identifies the activity (for status output).
 	ActivityID string
 	// Title is the activity's human label.
@@ -49,7 +46,6 @@ type Sub struct {
 type SubOpts struct {
 	Mode         string
 	BoundSession string
-	ActivityPane string
 	ActivityID   string
 	Title        string
 	Sink         Sink
@@ -82,7 +78,6 @@ func (b *Bus) Subscribe(o SubOpts) *Sub {
 	s := &Sub{
 		Mode:         o.Mode,
 		BoundSession: o.BoundSession,
-		ActivityPane: o.ActivityPane,
 		ActivityID:   o.ActivityID,
 		Title:        o.Title,
 		ch:           make(chan any, subBufferSize),

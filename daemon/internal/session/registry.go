@@ -17,15 +17,7 @@ type Session struct {
 	// State is the current agent state.
 	State wire.State
 	// LastSeq is the highest applied per-session sequence number.
-	LastSeq int64
-	// TmuxPane is the tmux pane Claude runs in, self-registered from
-	// $TMUX_PANE by the emit client ("" when not under tmux).
-	TmuxPane string
-	// TmuxSession is the tmux session name (filled by the tmux controller in M3).
-	TmuxSession string
-	// TmuxSocket is the tmux server socket path parsed from $TMUX
-	// ("" = default server); used to scope tmux commands.
-	TmuxSocket  string
+	LastSeq     int64
 	FirstSeenAt time.Time
 	LastEventAt time.Time
 }
@@ -88,15 +80,6 @@ func (r *Registry) Apply(m *wire.EmitMessage) Update {
 	from := s.State
 	s.LastSeq = m.Seq
 	s.LastEventAt = time.Now()
-	if m.TmuxPane != "" {
-		s.TmuxPane = m.TmuxPane
-	}
-	if m.TmuxSession != "" {
-		s.TmuxSession = m.TmuxSession
-	}
-	if m.TmuxSocket != "" {
-		s.TmuxSocket = m.TmuxSocket
-	}
 	if newState != s.State {
 		s.State = newState
 	}
@@ -115,7 +98,8 @@ func (r *Registry) Get(id string) (Session, bool) {
 }
 
 // MostRecent returns a copy of the session with the latest LastEventAt.
-// Used for "auto" subscription binding until tmux topology arrives (M3).
+// Used for unbound "auto" subscriptions: when no explicit session id is
+// available, follow whatever Claude session is most recently active.
 func (r *Registry) MostRecent() (Session, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

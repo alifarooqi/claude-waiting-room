@@ -68,10 +68,10 @@ func printStatus(st *wire.StatusResponseMessage) {
 		fmt.Println("no sessions registered")
 		return
 	}
-	fmt.Printf("%-24s %-16s %-8s %s\n", "SESSION", "STATE", "PANE", "ACTIVITIES")
+	fmt.Printf("%-24s %-16s %s\n", "SESSION", "STATE", "ACTIVITIES")
 	for _, s := range st.Sessions {
 		acts := strings.Join(s.BoundActivities, ", ")
-		fmt.Printf("%-24s %-16s %-8s %s\n",
-			s.SessionID, s.State, orDash(s.TmuxPane), orDash(acts))
+		fmt.Printf("%-24s %-16s %s\n",
+			s.SessionID, s.State, orDash(acts))
 	}
 }

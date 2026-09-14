@@ -12,12 +12,13 @@ type GCResult struct {
 	Reaped int
 }
 
-// GC reaps sessions whose pane no longer exists on the tmux server AND
-// that have been idle longer than idleThreshold. paneExists is called
-// per-session with the session's (paneID, socketPath).
+// GC reaps sessions that have been idle longer than idleThreshold, marking
+// them UNKNOWN. v2 dropped the pane-existence check (sessions are no
+// longer anchored to tmux panes — they're keyed by Claude's session_id
+// alone).
 //
 // idleThreshold must be > 0; zero means "no idle threshold".
-func (r *Registry) GC(idleThreshold time.Duration, paneExists func(paneID, socketPath string) bool) GCResult {
+func (r *Registry) GC(idleThreshold time.Duration) GCResult {
 	if idleThreshold <= 0 {
 		return GCResult{}
 	}
@@ -29,9 +30,7 @@ func (r *Registry) GC(idleThreshold time.Duration, paneExists func(paneID, socke
 		if s.State == wire.StateUnknown {
 			continue
 		}
-		stale := now.Sub(s.LastEventAt) > idleThreshold
-		paneDead := s.TmuxPane != "" && paneExists != nil && !paneExists(s.TmuxPane, s.TmuxSocket)
-		if stale && paneDead {
+		if now.Sub(s.LastEventAt) > idleThreshold {
 			s.State = wire.StateUnknown
 			reaped++
 		}
