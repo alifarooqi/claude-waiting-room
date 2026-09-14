@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/alifarooqi/claude-waiting-room/daemon/internal/bus"
 	"github.com/alifarooqi/claude-waiting-room/daemon/internal/focus"
@@ -33,7 +34,22 @@ type Core struct {
 	// racing an immediate UserPromptSubmit) can never override a newer
 	// focus — last state wins, regardless of goroutine scheduling.
 	focusMu sync.Mutex
+
+	// LastAttentionAt is the wall-clock time of the most recent
+	// needs_attention transition (per-session). Used to debounce the
+	// Stop→UserPromptSubmit race: a fresh "working" event within
+	// flickerWindow of the last "needs_attention" suppresses the
+	// transition broadcast (and the focus call), so the activity's
+	// pause overlay doesn't flash on/off for sub-second pauses.
+	lastAttentionAt map[string]time.Time
 }
+
+// flickerWindow is how long after a needs_attention transition a
+// following working transition is suppressed. Empirically: a Claude
+// Stop followed by the user submitting a new prompt typically happens
+// within ~500ms; 1500ms is comfortably larger than that but short
+// enough to feel responsive.
+const flickerWindow = 1500 * time.Millisecond
 
 // NewCore creates a handler. focuser may be a focus.Noop{} for tests
 // that don't care about focus recovery.
@@ -45,12 +61,13 @@ func NewCore(version string, logger *log.Logger, focuser focus.Controller) *Core
 		focuser = focus.Noop{}
 	}
 	return &Core{
-		version: version,
-		reg:     session.New(),
-		bus:     bus.New(),
-		focuser: focuser,
-		log:     logger,
-		subs:    make(map[bus.Sink]*bus.Sub),
+		version:         version,
+		reg:             session.New(),
+		bus:             bus.New(),
+		focuser:         focuser,
+		log:             logger,
+		subs:            make(map[bus.Sink]*bus.Sub),
+		lastAttentionAt: make(map[string]time.Time),
 	}
 }
 
@@ -96,12 +113,36 @@ func (c *Core) handleEmit(sink bus.Sink, m *wire.EmitMessage) {
 	}
 	_ = sink.Send(wire.Ack(true, ""))
 	c.log.Printf("emit session=%s event=%s state=%s", m.SessionID, m.Event, upd.To)
-	if upd.Changed {
+
+	// Flicker suppression: if we just transitioned to working within
+	// flickerWindow of the last needs_attention, skip the broadcast
+	// (and the focus recovery). The session's stored state is already
+	// updated by Apply; subscribers see it on the next real event or
+	// when they re-subscribe.
+	now := time.Now()
+	suppress := false
+	if upd.Changed && upd.From == wire.StateNeedsAttention && upd.To == wire.StateWorking {
+		c.mu.Lock()
+		lastAt, ok := c.lastAttentionAt[m.SessionID]
+		c.mu.Unlock()
+		if ok && now.Sub(lastAt) < flickerWindow {
+			suppress = true
+			c.log.Printf("debounce: suppressing working transition for session=%s (last needs_attention was %s ago)",
+				m.SessionID, now.Sub(lastAt))
+		}
+	}
+	if upd.Changed && upd.To == wire.StateNeedsAttention {
+		c.mu.Lock()
+		c.lastAttentionAt[m.SessionID] = now
+		c.mu.Unlock()
+	}
+
+	if upd.Changed && !suppress {
 		c.bus.Publish(m.SessionID,
 			wire.StateChangeMsg(m.SessionID, upd.From, upd.To, reasonOf(m)))
+		// Focus recovery is best-effort; never delay the ack path.
+		go c.applyFocus(upd.To)
 	}
-	// Focus recovery is best-effort; never delay the ack path.
-	go c.applyFocus(upd.To)
 }
 
 // applyFocus triggers OS-level focus recovery when Claude needs attention.

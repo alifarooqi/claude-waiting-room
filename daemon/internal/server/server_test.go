@@ -268,6 +268,8 @@ func TestInvalidModeNacked(t *testing.T) {
 
 // TestFocusOnTransition: when state transitions to needs_attention,
 // the focus controller is invoked exactly once.
+// TestFocusOnTransition: when state transitions to needs_attention,
+// the focus controller is invoked exactly once.
 func TestFocusOnTransition(t *testing.T) {
 	ff := &fakeFocus{}
 	dir := t.TempDir()
@@ -303,6 +305,50 @@ func TestFocusOnTransition(t *testing.T) {
 	}
 	if got := ff.callCount(); got != 1 {
 		t.Fatalf("focus called %d times, want 1", got)
+	}
+}
+
+// TestFlickerSuppression: a Stop followed by an immediate UserPromptSubmit
+// (within flickerWindow) must NOT broadcast the working transition (it
+// would flash the game overlay). The second emit is acked and applied,
+// but no state_change or focus call fires.
+func TestFlickerSuppression(t *testing.T) {
+	ff := &fakeFocus{}
+	dir := t.TempDir()
+	sock := filepath.Join(dir, "d.sock")
+	info := filepath.Join(dir, "daemon.info")
+	logger := log.New(io.Discard, "", 0)
+
+	core := NewCore("test", logger, ff)
+	srv := New(Options{SocketPath: sock, InfoPath: info, Version: "test", Log: logger}, core)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go func() { _ = srv.Run(ctx) }()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && !lifecycle.DaemonAlive(sock, 100*time.Millisecond) {
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	em := dialClient(t, sock)
+
+	// Stop → working within flicker window.
+	em.send(mkEmit("s1", wire.EventAgentNeedsAttention, time.Now().UnixNano()))
+	em.drainUntil(2*time.Second, func(m wire.Message) bool {
+		a, ok := m.(*wire.AckMessage)
+		return ok && a.Ok
+	})
+	em.send(mkEmit("s1", wire.EventAgentWorking, time.Now().UnixNano()))
+	em.drainUntil(2*time.Second, func(m wire.Message) bool {
+		a, ok := m.(*wire.AckMessage)
+		return ok && a.Ok
+	})
+
+	// Give any broadcast a moment to land.
+	time.Sleep(200 * time.Millisecond)
+
+	if got := ff.callCount(); got != 1 {
+		t.Fatalf("focus called %d times; want exactly 1 (only the Stop → needs_attention trigger)", got)
 	}
 }
 
