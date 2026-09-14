@@ -10,7 +10,7 @@ help: ## Show available targets
 	@grep -hE '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
 
 .PHONY: build
-build: build-daemon build-ts ## Build the Go daemon binary and all TS packages
+build: build-daemon build-ts build-web ## Build the Go daemon, TS packages, and browser bundles
 
 .PHONY: build-daemon
 build-daemon: ## Build the waiting-room Go binary (static, CGO disabled)
@@ -19,6 +19,10 @@ build-daemon: ## Build the waiting-room Go binary (static, CGO disabled)
 .PHONY: build-ts
 build-ts: ## Build (tsc) all TS workspace packages
 	pnpm -r run build
+
+.PHONY: build-web
+build-web: ## Bundle browser games (esbuild) for each game-* package
+	pnpm --filter './packages/game-*' run build:web
 
 .PHONY: test
 test: test-daemon test-ts ## Run Go + TS tests
