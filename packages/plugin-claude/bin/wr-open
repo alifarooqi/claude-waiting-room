@@ -1,0 +1,144 @@
+#!/bin/sh
+# wr-open <game> — open a Waiting Room side activity in the user's browser.
+#
+# Usage (from the plugin skill):
+#   wr-open <game-name>
+#
+# Behavior:
+#   - Reads ~/.waiting-room/daemon.info for { web_url, ws_url, web_games_dir }.
+#   - Reads the game bundle's index.html from $WAITING_ROOM_GAMES_DIR/<game>/.
+#   - Injects the WS connection hint into a tmpfile copy via the
+#     <!--{{WR_CONFIG}}--> placeholder.
+#   - Calls `open <tmpfile>` (macOS) to launch the user's default browser.
+#   - Emits one line of JSON on stdout (always last).
+#     {"ok":true,"url":"file://...","game":"snake"} on success
+#     {"ok":false,"reason":"..."} on any failure.
+#   - Always exits 0 (Claude hooks must never error Claude).
+#
+# Failure modes:
+#   no-daemon         daemon.info missing or unreadable
+#   no-web-url        daemon not running with --web (or no listener yet)
+#   game-not-installed  $WAITING_ROOM_GAMES_DIR/<game>/index.html missing
+#   no-session        neither $CLAUDE_SESSION_ID nor $WR_SESSION is set
+#   open-failed       `open` returned non-zero
+#   write-failed      tmpfile creation or substitution failed
+#
+# Env overrides:
+#   WAITING_ROOM_HOME     base dir (default ~/.waiting-room)
+#   WAITING_ROOM_GAMES_DIR game-bundle root (default $WAITING_ROOM_HOME/web)
+#   WAITING_ROOM_INFO      explicit path to daemon.info
+#   CLAUDE_SESSION_ID      Claude session id to bind to (preferred)
+#   WR_SESSION             fallback session id if CLAUDE_SESSION_ID is unset
+
+set -u
+
+# shellcheck disable=SC2155
+game=$1
+if [ -z "$game" ]; then
+    printf '{"ok":false,"reason":"missing-arg"}\n'
+    exit 0
+fi
+
+# Escape a string for inclusion in a JSON string literal.
+json_escape() {
+    printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
+}
+
+emit() {
+    printf '%s\n' "$1"
+}
+
+# Locate daemon.info.
+info_path="${WAITING_ROOM_INFO:-}"
+if [ -z "$info_path" ]; then
+    home=${WAITING_ROOM_HOME:-}
+    if [ -z "$home" ]; then
+        home="$HOME/.waiting-room"
+    fi
+    info_path="$home/daemon.info"
+fi
+
+if [ ! -r "$info_path" ]; then
+    emit '{"ok":false,"reason":"no-daemon"}'
+    exit 0
+fi
+
+# Pull web_url out of the JSON without invoking a JSON parser.
+# (Avoids requiring jq or node — must be POSIX sh + grep/sed.)
+web_url=$(grep -o '"web_url"[[:space:]]*:[[:space:]]*"[^"]*"' "$info_path" \
+    | sed -e 's/.*"web_url"[[:space:]]*:[[:space:]]*"//' -e 's/"$//')
+ws_url=$(grep -o '"ws_url"[[:space:]]*:[[:space:]]*"[^"]*"' "$info_path" \
+    | sed -e 's/.*"ws_url"[[:space:]]*:[[:space:]]*"//' -e 's/"$//')
+games_dir_json=$(grep -o '"web_games_dir"[[:space:]]*:[[:space:]]*"[^"]*"' "$info_path" \
+    | sed -e 's/.*"web_games_dir"[[:space:]]*:[[:space:]]*"//' -e 's/"$//')
+
+if [ -z "$web_url" ] || [ -z "$ws_url" ]; then
+    emit '{"ok":false,"reason":"no-web-url"}'
+    exit 0
+fi
+
+games_dir=${WAITING_ROOM_GAMES_DIR:-}
+if [ -z "$games_dir" ]; then
+    if [ -n "$games_dir_json" ]; then
+        games_dir=$games_dir_json
+    else
+        home=${WAITING_ROOM_HOME:-}
+        if [ -z "$home" ]; then home="$HOME/.waiting-room"; fi
+        games_dir="$home/web"
+    fi
+fi
+
+index_html="$games_dir/$game/index.html"
+if [ ! -r "$index_html" ]; then
+    emit "{\"ok\":false,\"reason\":\"game-not-installed\",\"game\":\"$(json_escape "$game")\"}"
+    exit 0
+fi
+
+# Pick a session id.
+session_id=${CLAUDE_SESSION_ID:-${WR_SESSION:-}}
+if [ -z "$session_id" ]; then
+    # Fall back to the most recent session in the registry — but the
+    # daemon.info doesn't list sessions, so leave empty and let the
+    # browser subscribe in "any" mode (server will pick the latest).
+    session_id=""
+fi
+
+# Build the injected config block.
+ws_esc=$(json_escape "$ws_url")
+sid_esc=$(json_escape "$session_id")
+inject="<script>window.__WAITING_ROOM__={ws_url:\"$ws_esc\",session_id:\"$sid_esc\"};</script>"
+
+# Write to a tmpfile so the OS file:// URL is stable (and we don't
+# mutate the user's installed bundle).
+TMPDIR_BASE="${TMPDIR:-/tmp}"
+TMP=$(mktemp -d "${TMPDIR_BASE%/}/wr-open.XXXXXX") || {
+    emit '{"ok":false,"reason":"write-failed"}'
+    exit 0
+}
+tmp_html="$TMP/index.html"
+# Copy and substitute.
+sed "s|<!--{{WR_CONFIG}}-->|$inject|" "$index_html" > "$tmp_html" || {
+    rm -rf "$TMP"
+    emit '{"ok":false,"reason":"write-failed"}'
+    exit 0
+}
+# Best-effort cleanup: leave the tmpdir in place until the browser
+# has had time to load (the OS will reclaim it later).
+( sleep 60; rm -rf "$TMP" ) 2>/dev/null || true &
+
+# Launch the user's default browser. `open` is macOS-only.
+if command -v open >/dev/null 2>&1; then
+    open "$tmp_html" 2>/dev/null || {
+        emit '{"ok":false,"reason":"open-failed"}'
+        exit 0
+    }
+    url="file://$tmp_html"
+else
+    # Fallback: print the URL so the user can open it manually.
+    url="file://$tmp_html"
+fi
+
+game_esc=$(json_escape "$game")
+emit "{\"ok\":true,\"url\":\"$(json_escape "$url")\",\"game\":\"$game_esc\"}"
+
+exit 0

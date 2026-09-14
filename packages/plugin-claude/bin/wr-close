@@ -1,0 +1,49 @@
+#!/bin/sh
+# wr-close <game> — close the browser tab running the named game.
+#
+# Usage (from the plugin skill):
+#   wr-close <game-name>
+#
+# Behavior:
+#   - Asks AppleScript to close every Chrome/Safari tab whose title
+#     contains "Waiting Room" AND the game's slug (best-effort).
+#   - Always exits 0.
+#
+# This is a soft hint to the OS; the browser may show a confirmation
+# dialog if the tab is busy. The disconnect itself is what cleans the
+# daemon subscription — closing the tab is a UX nicety.
+
+set -u
+
+game=${1:-}
+if [ -z "$game" ]; then
+    printf '{"ok":false,"reason":"missing-arg"}\n'
+    exit 0
+fi
+
+# Try Chrome (Chromium / Google Chrome) first, then Safari.
+close_in() {
+    app="$1"
+    if ! command -v osascript >/dev/null 2>&1; then
+        return 0
+    fi
+    osascript <<EOF >/dev/null 2>&1 || true
+tell application "$app"
+    if (count of windows) is 0 then return
+    repeat with w in windows
+        repeat with t in tabs of w
+            if title of t contains "Waiting Room" and title of t contains "$game" then
+                close t
+            end if
+        end repeat
+    end repeat
+end tell
+EOF
+}
+
+close_in "Google Chrome"
+close_in "Chromium"
+close_in "Safari"
+
+printf '{"ok":true,"game":"%s"}\n' "$game"
+exit 0

@@ -11,8 +11,8 @@
 #   watch           Live subscriber (used by humans).
 #   status          Print the session registry table.
 #   version         Print the daemon version.
-#   list-games      Print waiting-room-* CLIs found on $PATH.
-#   launch <name>   exec waiting-room-<name> from PATH.
+#   list-games      Print installed browser game bundle names found in
+#                   $WAITING_ROOM_HOME/web/<name>/index.html.
 #   _install_only   (internal) install without exec — used by `daemon`.
 #
 # Cached binary lives at $CLAUDE_PLUGIN_ROOT/bin/.wr-cache/waiting-room.
@@ -56,44 +56,32 @@ Usage:
   waiting-room <command> [args]
 
 Commands:
-  daemon         Run the background IPC daemon
+  daemon         Run the background IPC daemon (with HTTP+WS listener)
   emit           Emit a lifecycle event (used by Claude Code hooks)
   watch          Live subscriber: print session state changes
   status         Show daemon + session registry table
-  list-games     List installed waiting-room-* games on PATH
-  launch <game>  Launch a waiting-room-<game> activity
+  list-games     List installed browser game bundles
   version        Print version
   help           Show this help
 EOF
         exit 0
         ;;
     list-games)
-        # POSIX: list PATH binaries matching a prefix.
-        # `compgen -c` is bash; the portable trick is to walk PATH and match.
-        # Cheapest reliable cross-platform: shell out to the equivalent of
-        # bash's `compgen -c`, which doesn't is to scan $PATH dirs.
-        PATH_SCAN=$(IFS=:; for d in $PATH; do
-            [ -d "$d" ] || continue
-            for f in "$d"/waiting-room-*; do
-                [ -x "$f" ] && basename "$f"
-            done
-        done)
-        printf '%s\n' "$PATH_SCAN" 2>/dev/null | sort -u
-        exit 0
-        ;;
-    launch)
-        shift
-        name=$1
-        if [ -z "$name" ]; then exit 0; fi
-        # Exec the matched game from PATH (assumes convention waiting-room-<name>).
-        if command -v "waiting-room-$name" >/dev/null 2>&1; then
-            exec "waiting-room-$name"
+        # v2: games are browser bundles in $WAITING_ROOM_HOME/web/<name>/.
+        # POSIX: walk the dir and print directory names whose index.html exists.
+        games_dir=${WAITING_ROOM_GAMES_DIR:-}
+        if [ -z "$games_dir" ]; then
+            home=${WAITING_ROOM_HOME:-}
+            if [ -z "$home" ]; then home="$HOME/.waiting-room"; fi
+            games_dir="$home/web"
         fi
-        # Not on PATH: surface a clear error to stderr (visible when run
-        # manually, swallowed by Claude hooks via the install script's
-        # captured pipe — we don't suppress stderr because users want
-        # this hint when they run `/waiting-room launch snake` interactively).
-        printf 'waiting-room: game "%s" not installed (try "npm install -g @waiting-room/game-%s")\n' "$name" "$name" >&2
+        if [ -d "$games_dir" ]; then
+            for d in "$games_dir"/*/; do
+                [ -d "$d" ] || continue
+                [ -r "$d/index.html" ] || continue
+                basename "$d"
+            done | sort -u
+        fi
         exit 0
         ;;
 esac
