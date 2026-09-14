@@ -1,6 +1,6 @@
 # @waiting-room/plugin-claude
 
-A [Claude Code](https://code.claude.com) plugin that pauses side activities and snaps tmux focus back when Claude needs you.
+A [Claude Code](https://code.claude.com) plugin that opens browser-based side activities and pauses them when Claude needs your attention.
 
 ## What it does
 
@@ -13,7 +13,7 @@ The plugin ships four hook events (in [`hooks/hooks.json`](./hooks/hooks.json)) 
 | `Stop` | Emits `agent_needs_attention --reason stop` | Claude is idle, waiting for input |
 | `Notification` | Emits `agent_needs_attention --reason notification` | Permission prompt or idle notification |
 
-The slash command (in [`skills/start/SKILL.md`](./skills/start/SKILL.md)) is `/waiting-room:start <game>`. It enumerates installed games (`waiting-room-snake`, `waiting-room-math`, …) and execs the one you pick. The plugin's `bin/waiting-room` script lives in the Bash tool's PATH while the plugin is enabled (Claude Code auto-adds `bin/` directories).
+The slash command (in [`skills/start/SKILL.md`](./skills/start/SKILL.md)) is `/waiting-room:start <game>`. It enumerates installed games (`snake`, `math`, …) and runs `bin/wr-open <game>` to launch the chosen one in your default browser. The plugin's `bin/waiting-room` script lives in the Bash tool's PATH while the plugin is enabled (Claude Code auto-adds `bin/` directories).
 
 All hook commands are `"async": true` and the `bin/waiting-room` script fails open (exit 0 silently on any failure). Hooks never block or error Claude.
 
@@ -32,14 +32,11 @@ All hook commands are `"async": true` and the `bin/waiting-room` script fails op
 npm install -g @waiting-room/game-snake
 npm install -g @waiting-room/exercise-math
 
-# 4. In a tmux pane:
-tmux new -s demo -d
-tmux split-window -h -t demo
-# left pane:
+# 4. Open Claude (any terminal — no tmux required)
 claude
 # inside Claude:
 /waiting-room:start                  # lists games, asks which to start
-/waiting-room:start snake            # launches snake directly
+/waiting-room:start snake            # opens snake in your browser
 ```
 
 ### Quick test (this repo)
@@ -56,13 +53,13 @@ Copy `packages/plugin-claude/` to `~/.claude/skills/waiting-room/` — Claude lo
 
 ### First-launch behavior
 
-On the first `SessionStart`, the plugin's `bin/waiting-room` script downloads the matching `waiting-room_<os>_<arch>.tar.gz` from the v1.0.0 GitHub release into `bin/.wr-cache/`, verifies SHA-256 against the release's `checksums.txt`, and extracts the single binary. Subsequent launches reuse the cached binary. The script always exits 0 — if the network is unavailable, the install is skipped and a `.install.failed` marker is written; clear it to retry.
+On the first `SessionStart`, the plugin's `bin/waiting-room` script downloads the matching `waiting-room_<os>_<arch>.tar.gz` from the GitHub release into `bin/.wr-cache/`, verifies SHA-256 against the release's `checksums.txt`, and extracts the single binary. Subsequent launches reuse the cached binary. The script always exits 0 — if the network is unavailable, the install is skipped and a `.install.failed` marker is written; clear it to retry.
 
 ## How the resolver works
 
-`bin/waiting-room` is a single POSIX sh script (~280 lines) that doubles as the resolver and the first-run installer. Every invocation goes through:
+`bin/waiting-room` is a single POSIX sh script (~240 lines) that doubles as the resolver and the first-run installer. Every invocation goes through:
 
-1. **Resolver-owned commands** (`version`, `help`, `list-games`, `launch <name>`) are handled here, never passed to the daemon.
+1. **Resolver-owned commands** (`version`, `help`, `list-games`) are handled here, never passed to the daemon.
 2. **Cached binary fast path**: if `bin/.wr-cache/waiting-room` exists and matches `WAITING_ROOM_VERSION`, exec it directly. No network, no install.
 3. **Install pipeline** (only on cache miss): detect platform → mkdir 0700 cache → curl tarball + checksums → verify SHA-256 → tar extract → chmod 0755 → stamp version. Any failure writes a `.install.failed` marker and exits 0.
 4. **Daemon subcommand** (special-cased after install): `nohup` the cached binary detached with all stdio redirected, so the daemon outlives Claude's session lifecycle.
@@ -74,12 +71,14 @@ On the first `SessionStart`, the plugin's `bin/waiting-room` script downloads th
 - **Install failed**: `rm bin/.wr-cache/.install.failed` and try again.
 - **Force a fresh install** (new daemon version): `rm bin/.wr-cache/waiting-room` and restart Claude.
 - **Network unavailable on first launch**: the script fails open; activities will degrade silently (auto-pause unavailable) until you have network.
+- **Focus didn't switch to Claude**: macOS requires Accessibility permission. Grant it once in System Settings → Privacy & Security → Accessibility. See `docs/troubleshooting.md`.
 - **Override the binary path**: set `WAITING_ROOM_BIN=/path/to/waiting-room` in your shell env.
 
 ## Safety
 
 - All hooks are async + fail-open. They cannot block Claude, suppress output, or break the session.
 - Peer-credential UID check on the daemon's Unix Domain Socket (Linux `SO_PEERCRED`, macOS `LOCAL_PEERCRED`) prevents cross-user access on shared hosts.
+- The HTTP+WS listener binds to `127.0.0.1` only (random free port) and validates the `Origin` header so a malicious site can't drive the user's waiting-room subscription cross-origin.
 - The plugin ships zero binaries (only the resolver script). The daemon binary is downloaded on first use and verified against a SHA-256 sum published by the maintainer.
 
-See [`docs/security-uds.md`](../../docs/security-uds.md) for the full threat model.
+See [`docs/security-uds.md`](../../docs/security-uds.md) for the UDS threat model and [`docs/security-websocket.md`](../../docs/security-websocket.md) for the browser transport.

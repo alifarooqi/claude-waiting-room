@@ -5,60 +5,75 @@ import (
 	"log"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/alifarooqi/claude-waiting-room/daemon/internal/bus"
+	"github.com/alifarooqi/claude-waiting-room/daemon/internal/focus"
 	"github.com/alifarooqi/claude-waiting-room/daemon/internal/session"
-	"github.com/alifarooqi/claude-waiting-room/daemon/internal/tmux"
 	"github.com/alifarooqi/claude-waiting-room/daemon/internal/wire"
 )
 
-// TmuxFactory builds a tmux controller bound to a socket path ("" = the
-// default server). Tests substitute fakes; nil disables tmux entirely
-// (degraded mode: pause/resume still works, focus is skipped).
-type TmuxFactory func(socketPath string) tmux.Controller
-
 // Core is the daemon's message handler: it folds emits into the session
-// registry, drives the bus, binds activities to sessions by tmux window
-// topology, and switches focus on every state transition.
+// registry, drives the bus, and triggers OS-level focus recovery on
+// every state transition.
 //
-// Separation of concerns: focus-switching is the daemon's job (tmux);
-// pause/resume is the activity's job (SDK callbacks).
+// Separation of concerns: focus recovery is the daemon's job (via the
+// focus.Controller); pause/resume is the activity's job (SDK callbacks).
 type Core struct {
 	version string
 	reg     *session.Registry
 	bus     *bus.Bus
-	factory TmuxFactory
+	focuser focus.Controller
 	log     *log.Logger
 
 	mu   sync.Mutex
 	subs map[bus.Sink]*bus.Sub
 
-	// focusMu serializes tmux focus operations. applyFocus re-reads the
+	// focusMu serializes focus operations. applyFocus re-reads the
 	// session state under this lock so a stale transition (e.g. a Stop
 	// racing an immediate UserPromptSubmit) can never override a newer
 	// focus — last state wins, regardless of goroutine scheduling.
 	focusMu sync.Mutex
+
+	// LastAttentionAt is the wall-clock time of the most recent
+	// needs_attention transition (per-session). Used to debounce the
+	// Stop→UserPromptSubmit race: a fresh "working" event within
+	// flickerWindow of the last "needs_attention" suppresses the
+	// transition broadcast (and the focus call), so the activity's
+	// pause overlay doesn't flash on/off for sub-second pauses.
+	lastAttentionAt map[string]time.Time
 }
 
-// NewCore creates a handler. Pass a nil factory to run without tmux.
-func NewCore(version string, logger *log.Logger, factory TmuxFactory) *Core {
+// flickerWindow is how long after a needs_attention transition a
+// following working transition is suppressed. Empirically: a Claude
+// Stop followed by the user submitting a new prompt typically happens
+// within ~500ms; 1500ms is comfortably larger than that but short
+// enough to feel responsive.
+const flickerWindow = 1500 * time.Millisecond
+
+// NewCore creates a handler. focuser may be a focus.Noop{} for tests
+// that don't care about focus recovery.
+func NewCore(version string, logger *log.Logger, focuser focus.Controller) *Core {
 	if logger == nil {
 		logger = log.New(os.Stderr, "", log.LstdFlags)
 	}
+	if focuser == nil {
+		focuser = focus.Noop{}
+	}
 	return &Core{
-		version: version,
-		reg:     session.New(),
-		bus:     bus.New(),
-		factory: factory,
-		log:     logger,
-		subs:    make(map[bus.Sink]*bus.Sub),
+		version:         version,
+		reg:             session.New(),
+		bus:             bus.New(),
+		focuser:         focuser,
+		log:             logger,
+		subs:            make(map[bus.Sink]*bus.Sub),
+		lastAttentionAt: make(map[string]time.Time),
 	}
 }
 
 // Accessors for the janitor and other internal collaborators.
 func (c *Core) Registry() *session.Registry { return c.reg }
 func (c *Core) Bus() *bus.Bus               { return c.bus }
-func (c *Core) Factory() TmuxFactory        { return c.factory }
 
 // Handle dispatches one decoded client message.
 func (c *Core) Handle(sink bus.Sink, msg wire.Message) {
@@ -98,21 +113,49 @@ func (c *Core) handleEmit(sink bus.Sink, m *wire.EmitMessage) {
 	}
 	_ = sink.Send(wire.Ack(true, ""))
 	c.log.Printf("emit session=%s event=%s state=%s", m.SessionID, m.Event, upd.To)
-	if upd.Changed {
+
+	// Flicker suppression: if we just transitioned to working within
+	// flickerWindow of the last needs_attention, skip the broadcast
+	// (and the focus recovery). The session's stored state is already
+	// updated by Apply; subscribers see it on the next real event or
+	// when they re-subscribe.
+	now := time.Now()
+	suppress := false
+	if upd.Changed && upd.From == wire.StateNeedsAttention && upd.To == wire.StateWorking {
+		c.mu.Lock()
+		lastAt, ok := c.lastAttentionAt[m.SessionID]
+		c.mu.Unlock()
+		if ok && now.Sub(lastAt) < flickerWindow {
+			suppress = true
+			c.log.Printf("debounce: suppressing working transition for session=%s (last needs_attention was %s ago)",
+				m.SessionID, now.Sub(lastAt))
+		}
+	}
+	if upd.Changed && upd.To == wire.StateNeedsAttention {
+		c.mu.Lock()
+		c.lastAttentionAt[m.SessionID] = now
+		c.mu.Unlock()
+	}
+
+	if upd.Changed && !suppress {
 		c.bus.Publish(m.SessionID,
 			wire.StateChangeMsg(m.SessionID, upd.From, upd.To, reasonOf(m)))
+		// Focus recovery is best-effort; never delay the ack path.
+		go c.applyFocus(upd.To)
 	}
-	// Focus + rebinding shell out to tmux; never delay the ack path.
-	go c.afterEmit(m, upd)
 }
 
-// afterEmit runs post-emit work off the connection goroutine: rebind
-// unbound auto activities (a Claude session may have appeared in their
-// window) and switch focus on state transitions.
-func (c *Core) afterEmit(m *wire.EmitMessage, upd session.Update) {
-	c.rebindUnbound(m.TmuxSocket)
-	if upd.Changed {
-		c.applyFocus(m.SessionID, upd.To)
+// applyFocus triggers OS-level focus recovery when Claude needs attention.
+// The working→needs_attention transition is the trigger.
+func (c *Core) applyFocus(to wire.State) {
+	if to != wire.StateNeedsAttention {
+		return
+	}
+	c.focusMu.Lock()
+	defer c.focusMu.Unlock()
+	if err := c.focuser.FocusClaude(); err != nil {
+		// focuser already logged; do nothing more here.
+		_ = err
 	}
 }
 
@@ -126,22 +169,20 @@ func (c *Core) handleSubscribe(sink bus.Sink, m *wire.SubscribeMessage) {
 		return
 	}
 
-	// Resolve the binding:
+	// Resolve binding:
 	//   - explicit session id wins;
-	//   - "auto" binds by tmux window topology — the session whose Claude
-	//     pane shares the activity's window (multiple candidates → most
-	//     recently active; none → unbound, follows everything until a
-	//     session appears and rebinds).
-	//   - "any" follows everything.
+	//   - "any" follows everything;
+	//   - "auto" binds to the most recently active session (v2 has no
+	//     tmux topology to anchor on). If no session is registered
+	//     yet, the subscription stays unbound and follows the next emit.
 	bound := m.SessionID
 	if mode == "auto" {
-		bound = c.resolveAutoBind(m.ActivityPane, m.TmuxSocket)
+		bound = c.mostRecentID()
 	}
 
 	sub := c.bus.Subscribe(bus.SubOpts{
 		Mode:         mode,
 		BoundSession: bound,
-		ActivityPane: m.ActivityPane,
 		ActivityID:   m.ActivityID,
 		Title:        m.Title,
 		Sink:         sink,
@@ -153,7 +194,7 @@ func (c *Core) handleSubscribe(sink bus.Sink, m *wire.SubscribeMessage) {
 
 	_ = sink.Send(wire.Ack(true, ""))
 	c.snapshotInto(sink, bound)
-	c.log.Printf("subscribe activity=%s mode=%s bound=%q pane=%q", m.ActivityID, mode, bound, m.ActivityPane)
+	c.log.Printf("subscribe activity=%s mode=%s bound=%q", m.ActivityID, mode, bound)
 }
 
 func (c *Core) handleUnsubscribe(sink bus.Sink) {
@@ -171,8 +212,6 @@ func (c *Core) handleStatus(sink bus.Sink) {
 		st := wire.SessionStatus{
 			SessionID:   s.ID,
 			State:       s.State,
-			TmuxPane:    s.TmuxPane,
-			TmuxSession: s.TmuxSession,
 			LastEventAt: s.LastEventAt,
 		}
 		for _, sub := range c.listSubs() {
@@ -203,169 +242,11 @@ func (c *Core) snapshotInto(sink bus.Sink, bound string) {
 	_ = sink.Send(wire.SnapshotMsg(sid, state))
 }
 
-// resolveAutoBind implements window-topology binding: find the tmux window
-// containing the activity's pane, then the session whose Claude pane shares
-// that window. Falls back to most-recent when tmux is unavailable.
-func (c *Core) resolveAutoBind(activityPane, socket string) string {
-	if c.factory == nil || activityPane == "" {
-		return c.mostRecentID()
-	}
-	ctrl := c.factory(socket)
-	if ctrl == nil || !ctrl.Available() {
-		return c.mostRecentID()
-	}
-	panes, err := ctrl.ListPanes()
-	if err != nil {
-		c.log.Printf("auto-bind: tmux unavailable (%v); falling back to most-recent", err)
-		return c.mostRecentID()
-	}
-
-	window := ""
-	for _, p := range panes {
-		if p.ID == activityPane {
-			window = p.WindowID
-			break
-		}
-	}
-	if window == "" {
-		return "" // activity pane doesn't exist: stay unbound
-	}
-
-	var candidates []session.Session
-	for _, s := range c.reg.List() {
-		if s.TmuxPane == "" {
-			continue
-		}
-		for _, p := range panes {
-			if p.ID == s.TmuxPane && p.WindowID == window {
-				candidates = append(candidates, s)
-				break
-			}
-		}
-	}
-	switch len(candidates) {
-	case 0:
-		return "" // no Claude in this window yet: unbound until one appears
-	case 1:
-		return candidates[0].ID
-	default:
-		// Multiple Claude panes share the window: bind the most recently
-		// active one.
-		best := candidates[0]
-		for _, s := range candidates[1:] {
-			if s.LastEventAt.After(best.LastEventAt) {
-				best = s
-			}
-		}
-		return best.ID
-	}
-}
-
-// rebindUnbound gives unbound "auto" subscriptions another chance to bind
-// now that a fresh emit may have registered a Claude pane in their window.
-func (c *Core) rebindUnbound(socket string) {
-	if c.factory == nil {
-		return
-	}
-	c.mu.Lock()
-	type pending struct {
-		sink bus.Sink
-		sub  *bus.Sub
-	}
-	var work []pending
-	for sk, sub := range c.subs {
-		if sub.Mode == "auto" && sub.BoundSession == "" {
-			work = append(work, pending{sk, sub})
-		}
-	}
-	c.mu.Unlock()
-
-	for _, w := range work {
-		if sid := c.resolveAutoBind(w.sub.ActivityPane, socket); sid != "" {
-			c.bus.Rebind(w.sub, sid)
-			c.log.Printf("auto-bind activity=%s -> session=%s", w.sub.ActivityID, sid)
-			c.snapshotInto(w.sink, sid)
-		}
-	}
-}
-
-// applyFocus switches tmux focus on a state transition:
-//   - NEEDS_ATTENTION: focus the session's Claude pane (the whole point).
-//   - WORKING: focus the bound activity's pane (Claude resumed; go play).
-func (c *Core) applyFocus(sessionID string, to wire.State) {
-	if c.factory == nil {
-		return
-	}
-
-	c.focusMu.Lock()
-	defer c.focusMu.Unlock()
-
-	// Re-read under the lock: if a newer transition already changed the
-	// state, this focus is stale — let the newer one win.
-	s, ok := c.reg.Get(sessionID)
-	if !ok || s.State != to {
-		return
-	}
-
-	var pane string
-	switch to {
-	case wire.StateNeedsAttention:
-		pane = s.TmuxPane
-	case wire.StateWorking:
-		pane = c.activityPaneFor(sessionID)
-	default:
-		return
-	}
-	c.focusPaneLocked(&s, pane)
-}
-
-// handleFocusRequest imperatively focuses the requester's bound session's
-// Claude pane (SDK focusAgentTerminal / activity quitting).
+// handleFocusRequest imperatively focuses the user's terminal (e.g. when
+// the activity quits and the user clicks back to Claude).
 func (c *Core) handleFocusRequest(sink bus.Sink) {
-	c.mu.Lock()
-	sub := c.subs[sink]
-	c.mu.Unlock()
-	if sub == nil || sub.BoundSession == "" {
-		_ = sink.Send(wire.Ack(false, "not bound to a session"))
-		return
-	}
-	if c.factory != nil {
-		go func() {
-			c.focusMu.Lock()
-			defer c.focusMu.Unlock()
-			if s, ok := c.reg.Get(sub.BoundSession); ok {
-				c.focusPaneLocked(&s, s.TmuxPane)
-			}
-		}()
-	}
+	go c.applyFocus(wire.StateNeedsAttention)
 	_ = sink.Send(wire.Ack(true, ""))
-}
-
-// focusPaneLocked runs the tmux focus for pane. Caller must hold focusMu.
-func (c *Core) focusPaneLocked(s *session.Session, pane string) {
-	if pane == "" {
-		return
-	}
-	ctrl := c.factory(s.TmuxSocket)
-	if ctrl == nil || !ctrl.Available() {
-		c.log.Printf("focus skipped: tmux unavailable")
-		return
-	}
-	if err := ctrl.FocusPane(pane); err != nil {
-		c.log.Printf("focus pane %s: %v", pane, err)
-	} else {
-		c.log.Printf("focus -> %s", pane)
-	}
-}
-
-// activityPaneFor returns the pane of an activity bound to the session.
-func (c *Core) activityPaneFor(sessionID string) string {
-	for _, sub := range c.listSubs() {
-		if sub.BoundSession == sessionID && sub.ActivityPane != "" {
-			return sub.ActivityPane
-		}
-	}
-	return ""
 }
 
 func (c *Core) listSubs() []*bus.Sub {

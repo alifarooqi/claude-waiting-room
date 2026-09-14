@@ -1,10 +1,9 @@
 /**
  * The public activity API. Separation of concerns: the daemon owns
- * focus-switching (tmux); the activity owns pausing/resuming its own loop
- * via these callbacks.
+ * OS-level focus recovery; the activity owns pausing/resuming its own
+ * loop via these callbacks.
  */
 import { randomUUID } from 'node:crypto';
-import { IpcClient } from './client.js';
 import { daemonAlive, ensureDaemon } from './ensure.js';
 import { socketCandidates } from './discover.js';
 import {
@@ -14,12 +13,13 @@ import {
   type StateChangeMessage,
   type SnapshotMessage,
 } from './protocol.js';
+import { type Transport } from './transport.js';
+import { pickTransport } from './pick-transport.js';
 
 export interface ActivityOptions {
   /**
    * Which Claude session this activity follows.
-   * - `'auto'` (default): bind by tmux window topology — the session whose
-   *   Claude pane shares this activity's window.
+   * - `'auto'` (default): bind to the most recently active Claude session.
    * - `'any'`: fire on every session's state change.
    * - `{ session: '<id>' }`: bind to an explicit Claude session_id.
    * Falls back to $WAITING_ROOM_SESSION if unset.
@@ -54,9 +54,13 @@ export interface Activity {
   onStateChange(cb: (state: AgentState, info: StateChangeInfo) => void): void;
   /** Fired when the connection to the daemon drops (activity keeps running). */
   onDisconnect(cb: () => void): void;
-  /** Imperatively focus the Claude pane (e.g. on quit). */
-  focusAgentTerminal(): Promise<void>;
-  /** Unsubscribe and close the socket. Safe to call multiple times. */
+  /**
+   * Imperatively focus the user's terminal (sends focus_request).
+   * Best-effort; resolves once the daemon has acked. Returns immediately
+   * when running in degraded mode.
+   */
+  focusClaude(): Promise<void>;
+  /** Unsubscribe and close the transport. Safe to call multiple times. */
   dispose(): Promise<void>;
 }
 
@@ -80,11 +84,10 @@ export async function createActivity(options: ActivityOptions = {}): Promise<Act
   const alive = await ensureDaemon(socketPath, { spawnEnabled });
   if (!alive) return degradedActivity();
 
-  return liveActivity(socketPath, options, title);
+  return liveActivity(options, title);
 }
 
 function liveActivity(
-  socketPath: string,
   options: ActivityOptions,
   title: string,
 ): Activity {
@@ -98,41 +101,41 @@ function liveActivity(
   const stateCbs: Array<(s: AgentState, info: StateChangeInfo) => void> = [];
   const disconnectCbs: Array<() => void> = [];
 
-  const client = new IpcClient({
-    socketPath,
-    onConnected: () => {
-      // (Re)subscribe on every connection; the server answers with a
-      // snapshot that re-syncs our state.
-      client.send({
-        v: PROTOCOL_VERSION,
-        type: 'subscribe',
-        mode: bind.mode,
-        session_id: bind.sessionId,
-        activity_id: activityId,
-        activity_pane: process.env['TMUX_PANE'] || undefined,
-        tmux_socket: tmuxSocketFromEnv() || undefined,
-        title,
-      });
-    },
-    onMessage: (msg) => {
-      switch (msg.type) {
-        case 'snapshot':
-          applyState((msg as SnapshotMessage).state);
-          break;
-        case 'state_change': {
-          const sc = msg as StateChangeMessage;
-          applyState(sc.to, { from: sc.from, to: sc.to, reason: sc.reason });
-          break;
+  let transport: Transport | undefined;
+  void (async () => {
+    transport = await pickTransport({
+      onConnected: () => {
+        // (Re)subscribe on every connection; the server answers with a
+        // snapshot that re-syncs our state.
+        transport?.send({
+          v: PROTOCOL_VERSION,
+          type: 'subscribe',
+          mode: bind.mode,
+          session_id: bind.sessionId,
+          activity_id: activityId,
+          title,
+        });
+      },
+      onMessage: (msg) => {
+        switch (msg.type) {
+          case 'snapshot':
+            applyState((msg as SnapshotMessage).state);
+            break;
+          case 'state_change': {
+            const sc = msg as StateChangeMessage;
+            applyState(sc.to, { from: sc.from, to: sc.to, reason: sc.reason });
+            break;
+          }
+          default:
+            break; // ack/pong/dropped/hello: not state-bearing
         }
-        default:
-          break; // ack/pong/dropped/hello: not state-bearing
-      }
-    },
-    onDisconnect: () => {
-      for (const cb of disconnectCbs) cb();
-    },
-  });
-  client.start();
+      },
+      onDisconnect: () => {
+        for (const cb of disconnectCbs) cb();
+      },
+    });
+    if (!disposed) transport.start();
+  })();
 
   function applyState(next: AgentState, info?: StateChangeInfo): void {
     if (next === state) return;
@@ -163,14 +166,14 @@ function liveActivity(
     onDisconnect(cb) {
       disconnectCbs.push(cb);
     },
-    focusAgentTerminal() {
-      client.send({ v: PROTOCOL_VERSION, type: 'focus_request' });
+    focusClaude() {
+      transport?.send({ v: PROTOCOL_VERSION, type: 'focus_request' });
       return Promise.resolve();
     },
     async dispose() {
       if (disposed) return;
       disposed = true;
-      await client.stop();
+      if (transport) await transport.stop();
     },
   };
 }
@@ -184,7 +187,7 @@ function degradedActivity(): Activity {
     onResume() {},
     onStateChange() {},
     onDisconnect() {},
-    focusAgentTerminal() {
+    focusClaude() {
       return Promise.resolve();
     },
     dispose() {
@@ -206,17 +209,10 @@ function parseEnvSession(): BindMode | undefined {
   return { session: v };
 }
 
-/** $TMUX is "<socket-path>,<pid>" — report the socket so the daemon can
- *  scope its tmux commands to the right server. */
-function tmuxSocketFromEnv(): string {
-  const t = process.env['TMUX'] ?? '';
-  const comma = t.indexOf(',');
-  return comma > 0 ? t.slice(0, comma) : '';
-}
-
 function slug(title: string): string {
   return title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'activity';
 }
 
 // Re-exported for `daemonAlive` consumers doing their own health checks.
 export { daemonAlive };
+

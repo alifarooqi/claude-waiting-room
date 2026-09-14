@@ -37,7 +37,7 @@ export function fakeActivity(): FakeActivity {
     onDisconnect(cb) {
       disconnect.push(cb);
     },
-    focusAgentTerminal() {
+    focusClaude() {
       return Promise.resolve();
     },
     dispose() {

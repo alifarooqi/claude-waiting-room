@@ -47,7 +47,7 @@ export function App({ activity }: { activity: Activity }) {
 
   useInput((input, key) => {
     if (input === 'q' || input === 'Q') {
-      void activity.focusAgentTerminal().finally(() => exit());
+      void activity.focusClaude().finally(() => exit());
       return;
     }
     if (paused || state.feedback !== '') return;

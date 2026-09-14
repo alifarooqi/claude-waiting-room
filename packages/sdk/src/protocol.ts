@@ -2,8 +2,8 @@
  * Waiting Room wire protocol — TypeScript mirror of the Go `internal/wire` package.
  *
  * Transport-agnostic: over a Unix Domain Socket these are newline-delimited JSON
- * objects (JSON-lines); a future WebSocket gateway would carry each object as one
- * text frame with no body changes.
+ * objects (JSON-lines); over the v2 WebSocket gateway each is one text frame
+ * with no body changes.
  */
 
 /** Protocol schema version carried in every envelope (`v`). */
@@ -36,9 +36,6 @@ export interface EmitMessage extends Envelope {
   readonly session_id: string;
   readonly seq: number;
   readonly ts: string;
-  readonly tmux_pane?: string;
-  readonly tmux_session?: string;
-  readonly tmux_socket?: string;
   readonly meta?: {
     readonly hook?: string;
     readonly cwd?: string;
@@ -63,8 +60,6 @@ export interface SubscribeMessage extends Envelope {
   /** Present when `mode === 'session'`. */
   readonly session_id?: string;
   readonly activity_id: string;
-  readonly activity_pane?: string;
-  readonly tmux_socket?: string;
   readonly title?: string;
 }
 
@@ -123,8 +118,8 @@ export interface PongMessage extends Envelope {
   readonly type: 'pong';
 }
 
-/** Asks the daemon to imperatively focus the bound session's Claude pane
- *  (used by an activity quitting, or focusAgentTerminal()). */
+/** Asks the daemon to imperatively focus the user's terminal (used by
+ *  an activity quitting, or the SDK's focusClaude()). */
 export interface FocusRequestMessage extends Envelope {
   readonly type: 'focus_request';
 }
@@ -133,8 +128,6 @@ export interface FocusRequestMessage extends Envelope {
 export interface SessionStatus {
   readonly session_id: string;
   readonly state: AgentState;
-  readonly tmux_pane?: string;
-  readonly tmux_session?: string;
   readonly bound_activities?: readonly string[];
   readonly last_event_at: string;
 }

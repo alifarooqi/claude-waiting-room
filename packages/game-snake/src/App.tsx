@@ -58,7 +58,7 @@ export function App({ activity }: { activity: Activity }) {
   useInput((input, key) => {
     if (input === 'q' || input === 'Q') {
       // Hand focus back to Claude on the way out.
-      void activity.focusAgentTerminal().finally(() => exit());
+      void activity.focusClaude().finally(() => exit());
       return;
     }
     if (input === 'p' || input === 'P') {

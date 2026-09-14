@@ -8,88 +8,47 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"reflect"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/alifarooqi/claude-waiting-room/daemon/internal/focus"
 	"github.com/alifarooqi/claude-waiting-room/daemon/internal/lifecycle"
-	"github.com/alifarooqi/claude-waiting-room/daemon/internal/tmux"
 	"github.com/alifarooqi/claude-waiting-room/daemon/internal/wire"
 )
 
-// fakeTmux is an in-memory tmux.Controller for focus-logic unit tests.
-type fakeTmux struct {
-	mu      sync.Mutex
-	panes   []tmux.PaneInfo
-	focused []string
+// fakeFocus is a focus.Controller for tests. It records every focus
+// request without actually doing anything OS-level.
+type fakeFocus struct {
+	mu     sync.Mutex
+	called int
+	lastTo wire.State
 }
 
-func (f *fakeTmux) Available() bool { return true }
-
-func (f *fakeTmux) ListPanes() ([]tmux.PaneInfo, error) {
+func (f *fakeFocus) FocusClaude() error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	out := make([]tmux.PaneInfo, len(f.panes))
-	copy(out, f.panes)
-	return out, nil
-}
-
-func (f *fakeTmux) FocusPane(id string) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.focused = append(f.focused, id)
+	f.called++
+	f.lastTo = wire.StateNeedsAttention
 	return nil
 }
 
-func (f *fakeTmux) PaneExists(id string) bool {
+func (f *fakeFocus) callCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	for _, p := range f.panes {
-		if p.ID == id {
-			return true
-		}
-	}
-	return false
-}
-
-func (f *fakeTmux) focusLog() []string {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return append([]string(nil), f.focused...)
-}
-
-func waitForFocus(t *testing.T, f *fakeTmux, want []string) {
-	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
-	for {
-		if got := f.focusLog(); reflect.DeepEqual(got, want) {
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("focus log = %v, want %v", f.focusLog(), want)
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	return f.called
 }
 
 // startTestServer boots a real daemon on a temp-dir socket and blocks until
 // it answers pings. Returns the socket path and info file path.
 func startTestServer(t *testing.T) (socketPath, infoPath string) {
 	t.Helper()
-	return startTestServerWithTmux(t, nil)
-}
-
-// startTestServerWithTmux is startTestServer with an injectable tmux factory
-// (nil = tmux disabled).
-func startTestServerWithTmux(t *testing.T, factory TmuxFactory) (socketPath, infoPath string) {
-	t.Helper()
 	dir := t.TempDir()
 	sock := filepath.Join(dir, "d.sock")
 	info := filepath.Join(dir, "daemon.info")
 	logger := log.New(io.Discard, "", 0)
 
-	core := NewCore("test", logger, factory)
+	core := NewCore("test", logger, focus.Noop{})
 	srv := New(Options{SocketPath: sock, InfoPath: info, Version: "test", Log: logger}, core)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -115,7 +74,6 @@ func startTestServerWithTmux(t *testing.T, factory TmuxFactory) (socketPath, inf
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	// Surface why: either Run errored early, or it's alive-but-not-answering.
 	select {
 	case err := <-done:
 		t.Fatalf("server did not come up: Run failed: %v", err)
@@ -206,8 +164,8 @@ func mkEmit(session, event string, seq int64) *wire.EmitMessage {
 	}
 }
 
-// TestEmitDrivesSubscriber is the M2 definition-of-done: an emit on one
-// connection drives a snapshot + state-change stream on a subscriber.
+// TestEmitDrivesSubscriber: an emit on one connection drives a
+// snapshot + state-change stream on a subscriber.
 func TestEmitDrivesSubscriber(t *testing.T) {
 	sock, _ := startTestServer(t)
 
@@ -288,7 +246,6 @@ func TestUnknownTypeIgnoredNotFatal(t *testing.T) {
 	sock, _ := startTestServer(t)
 	c := dialClient(t, sock)
 	c.sendRaw(`{"v":1,"type":"telepathy"}`)
-	// The connection must stay alive and keep processing.
 	c.send(wire.PingMsg())
 	c.drainUntil(2*time.Second, func(m wire.Message) bool {
 		_, ok := m.(*wire.PongMessage)
@@ -309,96 +266,129 @@ func TestInvalidModeNacked(t *testing.T) {
 	}
 }
 
-// TestFocusOnTransition: WORKING focuses the bound activity pane;
-// NEEDS_ATTENTION focuses the session's Claude pane. Binding happens by
-// window topology (fake panes share window @1).
+// TestFocusOnTransition: when state transitions to needs_attention,
+// the focus controller is invoked exactly once.
+// TestFocusOnTransition: when state transitions to needs_attention,
+// the focus controller is invoked exactly once.
 func TestFocusOnTransition(t *testing.T) {
-	ft := &fakeTmux{panes: []tmux.PaneInfo{
-		{ID: "%c", SessionID: "$1", SessionName: "main", WindowID: "@1", ActiveInWindow: true},
-		{ID: "%a", SessionID: "$1", SessionName: "main", WindowID: "@1"},
-	}}
-	sock, _ := startTestServerWithTmux(t, func(string) tmux.Controller { return ft })
+	ff := &fakeFocus{}
+	dir := t.TempDir()
+	sock := filepath.Join(dir, "d.sock")
+	info := filepath.Join(dir, "daemon.info")
+	logger := log.New(io.Discard, "", 0)
 
-	sub := dialClient(t, sock)
-	sub.send(&wire.SubscribeMessage{
-		Envelope: wire.Env("subscribe"), Mode: "auto",
-		ActivityID: "snake", ActivityPane: "%a", TmuxSocket: "fake",
-	})
-	sub.drainUntil(2*time.Second, func(m wire.Message) bool {
-		a, ok := m.(*wire.AckMessage)
-		return ok && a.Ok
-	})
-	sub.drainUntil(2*time.Second, func(m wire.Message) bool {
-		_, ok := m.(*wire.SnapshotMessage)
-		return ok
-	})
+	core := NewCore("test", logger, ff)
+	srv := New(Options{SocketPath: sock, InfoPath: info, Version: "test", Log: logger}, core)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go func() { _ = srv.Run(ctx) }()
 
-	em := dialClient(t, sock)
-	mk := func(event string, seq int64) *wire.EmitMessage {
-		return &wire.EmitMessage{
-			Envelope: wire.Env("emit"), Event: event, SessionID: "s1", Seq: seq,
-			TS: time.Now().UTC(), TmuxPane: "%c", TmuxSocket: "fake",
-		}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && !lifecycle.DaemonAlive(sock, 100*time.Millisecond) {
+		time.Sleep(10 * time.Millisecond)
 	}
 
-	// Claude starts working -> daemon pushes focus to the activity pane.
-	em.send(mk(wire.EventAgentWorking, 1))
+	em := dialClient(t, sock)
+	em.send(mkEmit("s1", wire.EventAgentNeedsAttention, time.Now().UnixNano()))
 	em.drainUntil(2*time.Second, func(m wire.Message) bool {
 		a, ok := m.(*wire.AckMessage)
 		return ok && a.Ok
 	})
-	waitForFocus(t, ft, []string{"%a"})
 
-	// Claude halts -> daemon snaps focus back to the Claude pane.
-	em.send(mk(wire.EventAgentNeedsAttention, 2))
-	em.drainUntil(2*time.Second, func(m wire.Message) bool {
-		a, ok := m.(*wire.AckMessage)
-		return ok && a.Ok
-	})
-	waitForFocus(t, ft, []string{"%a", "%c"})
+	// Wait for the goroutine in handleEmit to call applyFocus.
+	deadline = time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if ff.callCount() >= 1 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := ff.callCount(); got != 1 {
+		t.Fatalf("focus called %d times, want 1", got)
+	}
 }
 
-// TestFocusRequest: the SDK's imperative focusAgentTerminal focuses the
-// bound session's Claude pane without waiting for a state change.
-func TestFocusRequest(t *testing.T) {
-	ft := &fakeTmux{panes: []tmux.PaneInfo{
-		{ID: "%c", SessionID: "$1", SessionName: "main", WindowID: "@1", ActiveInWindow: true},
-		{ID: "%a", SessionID: "$1", SessionName: "main", WindowID: "@1"},
-	}}
-	sock, _ := startTestServerWithTmux(t, func(string) tmux.Controller { return ft })
+// TestFlickerSuppression: a Stop followed by an immediate UserPromptSubmit
+// (within flickerWindow) must NOT broadcast the working transition (it
+// would flash the game overlay). The second emit is acked and applied,
+// but no state_change or focus call fires.
+func TestFlickerSuppression(t *testing.T) {
+	ff := &fakeFocus{}
+	dir := t.TempDir()
+	sock := filepath.Join(dir, "d.sock")
+	info := filepath.Join(dir, "daemon.info")
+	logger := log.New(io.Discard, "", 0)
 
-	sub := dialClient(t, sock)
-	sub.send(&wire.SubscribeMessage{
-		Envelope: wire.Env("subscribe"), Mode: "auto",
-		ActivityID: "snake", ActivityPane: "%a", TmuxSocket: "fake",
-	})
-	sub.drainUntil(2*time.Second, func(m wire.Message) bool {
-		a, ok := m.(*wire.AckMessage)
-		return ok && a.Ok
-	})
-	sub.drainUntil(2*time.Second, func(m wire.Message) bool {
-		_, ok := m.(*wire.SnapshotMessage)
-		return ok
-	})
+	core := NewCore("test", logger, ff)
+	srv := New(Options{SocketPath: sock, InfoPath: info, Version: "test", Log: logger}, core)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go func() { _ = srv.Run(ctx) }()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && !lifecycle.DaemonAlive(sock, 100*time.Millisecond) {
+		time.Sleep(10 * time.Millisecond)
+	}
 
 	em := dialClient(t, sock)
-	em.send(&wire.EmitMessage{
-		Envelope: wire.Env("emit"), Event: wire.EventAgentWorking, SessionID: "s1",
-		Seq: 1, TS: time.Now().UTC(), TmuxPane: "%c", TmuxSocket: "fake",
-	})
+
+	// Stop → working within flicker window.
+	em.send(mkEmit("s1", wire.EventAgentNeedsAttention, time.Now().UnixNano()))
 	em.drainUntil(2*time.Second, func(m wire.Message) bool {
 		a, ok := m.(*wire.AckMessage)
 		return ok && a.Ok
 	})
-	waitForFocus(t, ft, []string{"%a"})
-
-	// Imperative focus from the activity's own connection.
-	sub.send(wire.FocusRequest())
-	sub.drainUntil(2*time.Second, func(m wire.Message) bool {
+	em.send(mkEmit("s1", wire.EventAgentWorking, time.Now().UnixNano()))
+	em.drainUntil(2*time.Second, func(m wire.Message) bool {
 		a, ok := m.(*wire.AckMessage)
 		return ok && a.Ok
 	})
-	waitForFocus(t, ft, []string{"%a", "%c"})
+
+	// Give any broadcast a moment to land.
+	time.Sleep(200 * time.Millisecond)
+
+	if got := ff.callCount(); got != 1 {
+		t.Fatalf("focus called %d times; want exactly 1 (only the Stop → needs_attention trigger)", got)
+	}
+}
+
+// TestFocusRequest: the SDK's imperative focusClaude triggers a focus
+// call without waiting for a state change.
+func TestFocusRequest(t *testing.T) {
+	ff := &fakeFocus{}
+	dir := t.TempDir()
+	sock := filepath.Join(dir, "d.sock")
+	info := filepath.Join(dir, "daemon.info")
+	logger := log.New(io.Discard, "", 0)
+
+	core := NewCore("test", logger, ff)
+	srv := New(Options{SocketPath: sock, InfoPath: info, Version: "test", Log: logger}, core)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go func() { _ = srv.Run(ctx) }()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && !lifecycle.DaemonAlive(sock, 100*time.Millisecond) {
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	c := dialClient(t, sock)
+	c.send(wire.FocusRequest())
+	c.drainUntil(2*time.Second, func(m wire.Message) bool {
+		a, ok := m.(*wire.AckMessage)
+		return ok && a.Ok
+	})
+
+	deadline = time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if ff.callCount() >= 1 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := ff.callCount(); got != 1 {
+		t.Fatalf("focus called %d times after focus_request, want 1", got)
+	}
 }
 
 func TestInfoFileLifecycle(t *testing.T) {
@@ -411,13 +401,12 @@ func TestInfoFileLifecycle(t *testing.T) {
 		t.Fatalf("socket should exist while running: %v", err)
 	}
 
-	// Verify graceful teardown on a second server instance we control
-	// (the first is cleaned up by t.Cleanup after the test ends).
 	dir := t.TempDir()
 	sock2 := filepath.Join(dir, "d2.sock")
 	info2 := filepath.Join(dir, "daemon2.info")
 	logger := log.New(io.Discard, "", 0)
-	srv := New(Options{SocketPath: sock2, InfoPath: info2, Version: "test", Log: logger}, NewCore("test", logger, nil))
+	srv := New(Options{SocketPath: sock2, InfoPath: info2, Version: "test", Log: logger},
+		NewCore("test", logger, focus.Noop{}))
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() { _ = srv.Run(ctx) }()
 
@@ -432,7 +421,7 @@ func TestInfoFileLifecycle(t *testing.T) {
 		_, sockErr := os.Stat(sock2)
 		_, infoErr := os.Stat(info2)
 		if os.IsNotExist(sockErr) && os.IsNotExist(infoErr) {
-			return // both gone: graceful teardown worked
+			return
 		}
 		time.Sleep(10 * time.Millisecond)
 	}

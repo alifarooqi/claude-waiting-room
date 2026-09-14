@@ -1,6 +1,9 @@
 /**
  * Socket discovery — mirrors the Go daemon's config.Default/discoverSocket:
  * $WAITING_ROOM_SOCKET, then the daemon.info file, then the default path.
+ *
+ * v2 also exposes the daemon's HTTP/WS URLs (when present) so browser
+ * activities can subscribe via WebSocket instead of UDS.
  */
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -9,8 +12,22 @@ import { join } from 'node:path';
 export interface DaemonInfo {
   readonly pid: number;
   readonly socket_path: string;
+  /** v2: HTTP base URL for browser-side activities (e.g. http://127.0.0.1:52131/). */
+  readonly web_url?: string;
+  /** v2: WebSocket endpoint for browser subscribers (e.g. ws://127.0.0.1:52131/ws). */
+  readonly ws_url?: string;
   readonly version: string;
   readonly started_at: string;
+}
+
+/** Returns the WebSocket URL advertised by the daemon, or "" if absent. */
+export function wsUrlFromInfo(): string {
+  try {
+    const info = JSON.parse(readFileSync(infoFilePath(), 'utf8')) as DaemonInfo;
+    return info.ws_url ?? '';
+  } catch {
+    return '';
+  }
 }
 
 /** The daemon's well-known state dir: $WAITING_ROOM_HOME or ~/.waiting-room. */

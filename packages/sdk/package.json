@@ -10,6 +10,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./browser-transport": {
+      "types": "./dist/browser-transport.d.ts",
+      "import": "./dist/browser-transport.js"
     }
   },
   "files": [

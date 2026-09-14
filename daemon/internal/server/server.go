@@ -69,6 +69,8 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 	defer s.teardown()
 
+	// Write a baseline info file (socket only). The daemon binary may
+	// overwrite this with web URLs after the web listener binds.
 	if s.opts.InfoPath != "" {
 		if err := lifecycle.WriteInfo(s.opts.InfoPath, lifecycle.Info{
 			PID:        os.Getpid(),

@@ -2,7 +2,7 @@
   "name": "claude-waiting-room",
   "private": true,
   "version": "0.1.0",
-  "description": "Detect when Claude Code is busy vs needs attention; pause side activities and snap tmux focus back to the agent.",
+  "description": "Detect when Claude Code is busy vs needs attention; pause side activities and bring the terminal to the foreground.",
   "license": "MIT",
   "packageManager": "pnpm@10.29.1",
   "engines": {
@@ -10,6 +10,7 @@
   },
   "scripts": {
     "build": "make build",
+    "build:web": "pnpm --filter './packages/game-*' run build:web",
     "test": "make test",
     "lint": "make lint",
     "fmt": "make fmt",
@@ -21,5 +22,8 @@
   "devDependencies": {
     "@changesets/cli": "^2.27.0",
     "typescript": "^5.6.0"
+  },
+  "dependencies": {
+    "esbuild": "^0.28.2"
   }
 }

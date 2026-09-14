@@ -1,7 +1,7 @@
 {
   "name": "@waiting-room/exercise-math",
   "version": "1.0.1",
-  "description": "Multiple-choice math quiz — a Waiting Room reference activity.",
+  "description": "Browser multiple-choice math quiz — a Waiting Room reference activity.",
   "license": "MIT",
   "type": "module",
   "bin": {
@@ -9,6 +9,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "build:web": "node scripts/build-browser.mjs",
     "start": "node dist/index.js",
     "lint": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
@@ -16,17 +17,21 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@waiting-room/sdk": "^1.0.0",
+    "@waiting-room/sdk": "workspace:*",
     "ink": "^5.1.0",
-    "react": "^18.3.1"
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
   },
   "devDependencies": {
     "@types/node": "^22",
     "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
     "@waiting-room/tsconfig": "workspace:*",
+    "esbuild": "^0.21.5",
     "typescript": "^5.6.0",
     "vitest": "^2.1.0"
   },
+  "files": ["dist", "dist/web", "README.md"],
   "repository": {
     "type": "git",
     "url": "https://github.com/alifarooqi/claude-waiting-room"

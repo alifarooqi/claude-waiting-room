@@ -20,11 +20,16 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.23'
-      - name: Install tmux (macOS)
-        if: runner.os == 'macOS'
-        run: brew install tmux
-      - name: Install tmux (Linux)
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y tmux
-      - name: Go integration tests
-        run: cd daemon && go test -tags=integration ./...
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '10'
+      - run: pnpm install --frozen-lockfile
+      - name: Build (Go + TS + browser bundles)
+        run: make build
+      - name: Go unit tests
+        run: cd daemon && go test -race ./...
+      - name: TS unit tests
+        run: pnpm -r run test
