@@ -16,6 +16,8 @@ and one slash command:
 | `UserPromptSubmit` | Emits `agent_working` | Claude has work to do |
 | `Stop` | Emits `agent_needs_attention --reason stop` | Claude is idle, waiting for input |
 | `Notification` | Emits `agent_needs_attention --reason notification` | Permission prompt or idle notification |
+| `PreToolUse` | Emits `agent_working --reason pre-tool` | Claude is acting again — e.g. right after you approve a permission (approvals fire no hook of their own) |
+| `PostToolUse` | Emits `agent_working --reason post-tool` | Claude kept working through a tool call |
 
 The slash command (in [`skills/start/SKILL.md`](./skills/start/SKILL.md))
 is `/waiting-room:start <game>`. The skill runs `bin/wr-open`, which
@@ -23,7 +25,11 @@ launches the game's bridge process detached (bound to your session id),
 waits for its ready-line, and reports the local URL — your browser opens
 on the game. When Claude stops and needs you, the game pauses (banner +
 notification + beep) and Claude's terminal window is brought to the
-front; when Claude resumes, the game continues.
+front. When Claude gets back to work the game's banner says so, but the
+  game stays paused — resuming is always your call (`resume now`, or
+  "resume & remind me in N minutes" for a snooze). Tool use (e.g. right
+  after you approve a permission) is what reports Claude working again,
+  since permission approvals fire no hook of their own.
 
 Emit hooks are `"async": true` and the `bin/waiting-room` script fails
 open (exit 0 silently on any failure). Hooks never block or error Claude.

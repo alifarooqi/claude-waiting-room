@@ -10,8 +10,14 @@
  *     (title flash, favicon, notification, beep), each degrading
  *     independently; a browser page cannot steal OS focus, so these are
  *     the page's half of getting your attention.
+ *  3. `createPausePolicy()` — the shared pause/resume policy: Claude
+ *     needing attention pauses the game, only the player resumes it, and
+ *     "resume & remind" snoozes the pause for N minutes.
  */
 import type { AgentState } from '@waiting-room/sdk';
+
+export { createPausePolicy } from './pause-policy.js';
+export type { AgentStateLike, PauseBanner, PausePolicy, PauseSnapshot } from './pause-policy.js';
 
 export interface BrowserClientEvents {
   /** Every agent-state observation (initial snapshot + pings resync). */

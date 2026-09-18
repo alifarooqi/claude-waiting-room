@@ -1,8 +1,9 @@
 # @waiting-room/exercise-math
 
 A multiple-choice math quiz as a Waiting Room **web activity** — plays in
-your browser window, pauses when Claude Code needs you, resumes when
-Claude gets back to work.
+your browser window, pauses when Claude Code needs you — and stays
+paused until you resume it (plus an optional "remind me in N minutes"
+snooze).
 
 ```sh
 npm install -g @waiting-room/exercise-math
@@ -21,7 +22,10 @@ Behavior:
   flashes, the favicon turns red, you get a notification + beep (after
   your first click unlocks them), and Claude's terminal is brought to
   the front when the bridge can identify it.
-- **Claude resumes** → the banner clears and the quiz continues.
+- **Claude resumes** → the banner switches to "Claude is working again";
+  the quiz stays paused until you hit **resume now** (`↵`), or
+  **resume & remind me in 5/10/15/30 min** to keep playing and get
+  re-paused if Claude still waits when the timer fires.
 - Wrong answers reveal the right one; best streak is kept in
   `localStorage`. Quit with the in-page button or `Q`; closing the tab
   shuts the bridge down after ~30 s.

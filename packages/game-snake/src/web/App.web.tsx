@@ -1,15 +1,22 @@
 /**
- * Snake web UI — the same state machine as the old Ink TUI (autoPaused /
+ * Snake web UI — the same state machine as the old Ink TUI (agent pause /
  * manualPaused / offline), rendered with React DOM + canvas. Presentational:
  * main.web.tsx owns the browser client and passes connection state in,
  * which is also what tests drive.
+ *
+ * Pausing follows the shared policy: Claude needing attention pauses the
+ * game, but only the player resumes it — "resume now" or "resume & remind
+ * me in N minutes" (a snooze that re-pauses if Claude still waits).
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  createPausePolicy,
   primeUserGesture,
   startAttention,
   stopAttention,
   type BrowserClient,
+  type PausePolicy,
+  type PauseSnapshot,
 } from '@waiting-room/web-bridge/browser';
 import type { AgentState } from '@waiting-room/sdk';
 import {
@@ -29,6 +36,7 @@ import {
 const TICK_MS = 120;
 const CELL = 24; // logical px per board cell
 const PAD = 12; // canvas padding around the board
+const REMIND_CHOICES = [5, 10, 15, 30]; // minutes, on the pause banner
 
 export interface AppProps {
   /** Browser client (quit/focus actions). */
@@ -48,18 +56,48 @@ export function App({ client, agentState, daemonOnline, serverLost, initialGame 
   const [manualPaused, setManualPaused] = useState(false);
   const [best, setBest] = useState(0);
 
-  const autoPaused = agentState === 'needs_attention';
+  // --- pause policy (shared with every Waiting Room game) ------------------
+  const policyRef = useRef<PausePolicy | null>(null);
+  if (policyRef.current === null) policyRef.current = createPausePolicy();
+  const policy = policyRef.current;
+  const [snap, setSnap] = useState<PauseSnapshot>(policy.snapshot);
+
+  useEffect(() => {
+    const off = policy.onChange(setSnap);
+    return () => {
+      off();
+      policy.dispose();
+    };
+  }, [policy]);
+
+  // Feed agent-state observations in ('connecting' carries no news).
+  useEffect(() => {
+    if (agentState !== 'connecting') policy.onState(agentState);
+  }, [agentState, policy]);
+
+  const resume = useCallback((): void => policy.onResume(), [policy]);
+  const remind = useCallback((ms: number): void => policy.onRemind(ms), [policy]);
+
+  // Countdown ticker while a reminder is armed.
+  const reminding = snap.reminderAt !== null;
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (!reminding) return;
+    const id = setInterval(() => setTick((t) => t + 1), 1000);
+    return () => clearInterval(id);
+  }, [reminding]);
+
   const offline = !daemonOnline;
-  const paused = autoPaused || manualPaused;
+  const paused = snap.paused || manualPaused;
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
-  // Attention effects track the auto-pause.
+  // Attention effects track the policy (on while Claude actively waits).
   useEffect(() => {
-    if (autoPaused) startAttention();
+    if (snap.attention) startAttention();
     else stopAttention();
     return () => stopAttention();
-  }, [autoPaused]);
+  }, [snap.attention]);
 
   // Unlock notification permission + audio on the first user gesture.
   useEffect(() => {
@@ -116,6 +154,11 @@ export function App({ client, agentState, daemonOnline, serverLost, initialGame 
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (snap.paused && (e.key === 'Enter' || e.key === 'r' || e.key === 'R')) {
+        e.preventDefault();
+        resume();
+        return;
+      }
       switch (e.key) {
         case 'ArrowUp':
         case 'w':
@@ -160,7 +203,7 @@ export function App({ client, agentState, daemonOnline, serverLost, initialGame 
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [steer, game.gameOver, client]);
+  }, [steer, snap.paused, resume, game.gameOver, client]);
 
   const restart = (): void => setGame(createInitialState());
 
@@ -177,6 +220,11 @@ export function App({ client, agentState, daemonOnline, serverLost, initialGame 
           <span className="score dim">
             best <strong>{best}</strong>
           </span>
+          {snap.reminderAt !== null && (
+            <span className="score remind" title="This game re-pauses if Claude still needs you then">
+              reminder in <strong>{fmtRemaining(snap.reminderAt)}</strong>
+            </span>
+          )}
         </div>
       </header>
 
@@ -195,7 +243,7 @@ export function App({ client, agentState, daemonOnline, serverLost, initialGame 
             </button>
           </div>
         )}
-        {manualPaused && !autoPaused && !game.gameOver && (
+        {manualPaused && !snap.paused && !game.gameOver && (
           <div className="overlay">
             <p className="overlay-title">paused</p>
             <button className="btn" onClick={() => setManualPaused(false)}>
@@ -203,16 +251,47 @@ export function App({ client, agentState, daemonOnline, serverLost, initialGame 
             </button>
           </div>
         )}
-        {autoPaused && !serverLost && (
+        {snap.banner === 'waiting' && !serverLost && (
           <div className="banner paused-banner" role="status">
             <p className="banner-title">⏸ paused — Claude needs you</p>
             <p className="banner-note">
-              Claude stopped and is waiting for your input in its terminal. The game
-              resumes automatically when Claude gets back to work.
+              Claude is waiting for your input in its terminal. The game stays paused
+              until you resume.
             </p>
-            <button className="btn primary" onClick={() => void client.focusClaude()}>
-              back to Claude
-            </button>
+            <div className="banner-actions">
+              <button className="btn primary" onClick={resume} autoFocus>
+                resume now <span className="key">↵</span>
+              </button>
+              <button className="btn" onClick={() => void client.focusClaude()}>
+                back to Claude
+              </button>
+            </div>
+            <div className="remind-row">
+              <span className="remind-label">resume &amp; remind me in</span>
+              {REMIND_CHOICES.map((min) => (
+                <button
+                  key={min}
+                  className="chip"
+                  onClick={() => remind(min * 60_000)}
+                  title={`Keep playing — re-pause after ${min} minutes if Claude still needs you`}
+                >
+                  {min}m
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        {snap.banner === 'working-again' && !serverLost && (
+          <div className="banner resumed-banner" role="status">
+            <p className="banner-title">▶ paused — Claude is working again</p>
+            <p className="banner-note">
+              Claude got back to it. The game stays paused — resume whenever you like.
+            </p>
+            <div className="banner-actions">
+              <button className="btn primary" onClick={resume} autoFocus>
+                resume now <span className="key">↵</span>
+              </button>
+            </div>
           </div>
         )}
         {serverLost && (
@@ -258,6 +337,12 @@ export function App({ client, agentState, daemonOnline, serverLost, initialGame 
       <p className="hint">arrows / WASD steer · P pause · Q quit · food makes you grow</p>
     </main>
   );
+}
+
+/** "4:32" — seconds rounded up so the countdown starts at the full minute. */
+function fmtRemaining(at: number): string {
+  const s = Math.max(0, Math.ceil((at - Date.now()) / 1000));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
 
 /** Draw one frame of the board. */

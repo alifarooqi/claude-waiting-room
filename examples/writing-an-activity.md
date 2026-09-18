@@ -34,14 +34,25 @@ esbuild is a fine way to bundle them — see `game-snake/scripts/build-web.mjs`)
 // app.ts — the browser side (bundle it into the page)
 import {
   createBrowserClient,
+  createPausePolicy,
   primeUserGesture,
   startAttention,
   stopAttention,
 } from '@waiting-room/web-bridge/browser';
 
+// The shared pause policy: needs_attention pauses the game, only the
+// player resumes it ("resume now" / "resume & remind me in N minutes"),
+// and the banner tracks whether Claude still waits or is back at work.
+const pause = createPausePolicy();
+pause.onChange((snap) => {
+  renderPauseUI(snap); // banner variant, buttons, reminder countdown
+  if (snap.attention) startAttention();
+  else stopAttention();
+});
+
 const client = createBrowserClient({
   onState: (state, daemonOnline) => {
-    setPaused(state === 'needs_attention');
+    pause.onState(state);
     setOffline(!daemonOnline);
   },
   onServerLost: () => showFarewell(),
@@ -49,11 +60,6 @@ const client = createBrowserClient({
 
 // Unlock notification permission + audio on the first user gesture.
 window.addEventListener('pointerdown', primeUserGesture, { once: true });
-
-// "Claude needs you" effects: title flash, red favicon, notification,
-// beep — each degrades independently; call them on the pause transition.
-watchPauseTransition(
-  (paused) => (paused ? startAttention() : stopAttention()));
 
 // Buttons:
 await client.focusClaude(); // bring Claude's terminal forward, keep playing
@@ -70,10 +76,13 @@ session, and launch it detached. That's the whole convention.
    auto-pause", not "crash": the bridge serves the page anyway, the page
    shows an offline note, and everything else works. (The SDK's degraded
    mode already guarantees the callbacks simply never fire.)
-2. **Treat states as absolute.** `needs_attention` fully defines paused;
-   `working` fully defines running. Don't count transitions — react to
-   levels, so a missed event self-heals on the next one (the bridge's
-   15 s state pings also resync you).
+2. **Treat states as absolute observations; keep resume manual.**
+   `needs_attention` / `working` describe *Claude*, not your game loop:
+   pause on the first, and when the second arrives let the banner say
+   "Claude is working again" while the game stays paused until the player
+   resumes it. React to levels (never count transitions) so a missed event
+   self-heals on the next one — the bridge's 15 s state pings also resync
+   you. `createPausePolicy()` implements all of this; use it.
 3. **Retain state across reconnects.** The SSE stream reconnects
    automatically (2 s retry) and starts with a snapshot; your page should
    render purely from `(state, daemonOnline)` so any reconnect is a no-op

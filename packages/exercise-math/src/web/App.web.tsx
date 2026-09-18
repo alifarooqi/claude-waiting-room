@@ -3,18 +3,26 @@
  * pick → feedback flash → next; paused when Claude needs you).
  * Presentational: main.web.tsx owns the browser client and passes
  * connection state in, which is also what tests drive.
+ *
+ * Pausing follows the shared policy: Claude needing attention pauses the
+ * quiz, but only the player resumes it — "resume now" or "resume & remind
+ * me in N minutes" (a snooze that re-pauses if Claude still waits).
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  createPausePolicy,
   primeUserGesture,
   startAttention,
   stopAttention,
   type BrowserClient,
+  type PausePolicy,
+  type PauseSnapshot,
 } from '@waiting-room/web-bridge/browser';
 import type { AgentState } from '@waiting-room/sdk';
 import { generateQuestion, type Question } from '../math.js';
 
 const FEEDBACK_MS = 800;
+const REMIND_CHOICES = [5, 10, 15, 30]; // minutes, on the pause banner
 
 interface QuizState {
   readonly q: Question;
@@ -53,16 +61,46 @@ export function App({
   const [best, setBest] = useState(0);
   const advanceTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
-  const autoPaused = agentState === 'needs_attention';
-  const offline = !daemonOnline;
-  const locked = autoPaused || serverLost;
+  // --- pause policy (shared with every Waiting Room game) ------------------
+  const policyRef = useRef<PausePolicy | null>(null);
+  if (policyRef.current === null) policyRef.current = createPausePolicy();
+  const policy = policyRef.current;
+  const [snap, setSnap] = useState<PauseSnapshot>(policy.snapshot);
 
-  // Attention effects track the auto-pause.
   useEffect(() => {
-    if (autoPaused) startAttention();
+    const off = policy.onChange(setSnap);
+    return () => {
+      off();
+      policy.dispose();
+    };
+  }, [policy]);
+
+  // Feed agent-state observations in ('connecting' carries no news).
+  useEffect(() => {
+    if (agentState !== 'connecting') policy.onState(agentState);
+  }, [agentState, policy]);
+
+  const resume = useCallback((): void => policy.onResume(), [policy]);
+  const remind = useCallback((ms: number): void => policy.onRemind(ms), [policy]);
+
+  // Countdown ticker while a reminder is armed.
+  const reminding = snap.reminderAt !== null;
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (!reminding) return;
+    const id = setInterval(() => setTick((t) => t + 1), 1000);
+    return () => clearInterval(id);
+  }, [reminding]);
+
+  const offline = !daemonOnline;
+  const locked = snap.paused || serverLost;
+
+  // Attention effects track the policy (on while Claude actively waits).
+  useEffect(() => {
+    if (snap.attention) startAttention();
     else stopAttention();
     return () => stopAttention();
-  }, [autoPaused]);
+  }, [snap.attention]);
 
   // Unlock notification permission + audio on the first user gesture.
   useEffect(() => {
@@ -124,6 +162,11 @@ export function App({
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (snap.paused && (e.key === 'Enter' || e.key === 'r' || e.key === 'R')) {
+        e.preventDefault();
+        resume();
+        return;
+      }
       const n = state.q.options.length;
       if (e.key === 'ArrowUp' || e.key === 'k') {
         e.preventDefault();
@@ -144,7 +187,7 @@ export function App({
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [state.q.options.length, state.selected, submit, client]);
+  }, [snap.paused, resume, state.q.options.length, state.selected, submit, client]);
 
   const op = state.q.op === '*' ? '×' : state.q.op === '-' ? '−' : '+';
 
@@ -164,6 +207,11 @@ export function App({
           <span className="score dim">
             best <strong>{best}</strong>
           </span>
+          {snap.reminderAt !== null && (
+            <span className="score remind" title="This quiz re-pauses if Claude still needs you then">
+              reminder in <strong>{fmtRemaining(snap.reminderAt)}</strong>
+            </span>
+          )}
         </div>
       </header>
 
@@ -197,16 +245,47 @@ export function App({
           <p className="progress">answered {state.answered}</p>
         </section>
 
-        {autoPaused && !serverLost && (
+        {snap.banner === 'waiting' && !serverLost && (
           <div className="banner paused-banner" role="status">
             <p className="banner-title">⏸ paused — Claude needs you</p>
             <p className="banner-note">
-              Claude stopped and is waiting for your input in its terminal. The quiz
-              resumes automatically when Claude gets back to work.
+              Claude is waiting for your input in its terminal. The quiz stays paused
+              until you resume.
             </p>
-            <button className="btn primary" onClick={() => void client.focusClaude()}>
-              back to Claude
-            </button>
+            <div className="banner-actions">
+              <button className="btn primary" onClick={resume} autoFocus>
+                resume now <span className="key">↵</span>
+              </button>
+              <button className="btn" onClick={() => void client.focusClaude()}>
+                back to Claude
+              </button>
+            </div>
+            <div className="remind-row">
+              <span className="remind-label">resume &amp; remind me in</span>
+              {REMIND_CHOICES.map((min) => (
+                <button
+                  key={min}
+                  className="chip"
+                  onClick={() => remind(min * 60_000)}
+                  title={`Keep playing — re-pause after ${min} minutes if Claude still needs you`}
+                >
+                  {min}m
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        {snap.banner === 'working-again' && !serverLost && (
+          <div className="banner resumed-banner" role="status">
+            <p className="banner-title">▶ paused — Claude is working again</p>
+            <p className="banner-note">
+              Claude got back to it. The quiz stays paused — resume whenever you like.
+            </p>
+            <div className="banner-actions">
+              <button className="btn primary" onClick={resume} autoFocus>
+                resume now <span className="key">↵</span>
+              </button>
+            </div>
           </div>
         )}
         {serverLost && (
@@ -233,4 +312,10 @@ export function App({
       <p className="hint">1–4 or click to answer · ↑↓ choose · ↵ submit · Q quit</p>
     </main>
   );
+}
+
+/** "4:32" — seconds rounded up so the countdown starts at the full minute. */
+function fmtRemaining(at: number): string {
+  const s = Math.max(0, Math.ceil((at - Date.now()) / 1000));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }

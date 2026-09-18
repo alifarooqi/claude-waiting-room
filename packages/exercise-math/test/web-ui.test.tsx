@@ -131,7 +131,7 @@ describe('math web UI', () => {
     }
   });
 
-  it('shows the pause banner when Claude needs attention and locks input', () => {
+  it('pauses when Claude needs attention; resume is manual, not automatic', () => {
     const client = fakeClient();
     renderui({ client });
     expect(document.querySelector('.paused-banner')).toBeNull();
@@ -142,14 +142,89 @@ describe('math web UI', () => {
     expect(banner?.textContent).toContain('Claude needs you');
     expect(optionButtons().every((b) => b.disabled)).toBe(true);
 
-    const btn = banner?.querySelector('button');
-    act(() => {
-      (btn as HTMLButtonElement).click();
-    });
-    expect(client._focusCalls).toBe(1);
-
+    // Claude back at work: the quiz stays paused, but the banner says so.
     renderui({ client, agentState: 'working' });
     expect(document.querySelector('.paused-banner')).toBeNull();
+    const calm = document.querySelector('.resumed-banner');
+    expect(calm?.textContent).toContain('working again');
+    expect(optionButtons().every((b) => b.disabled)).toBe(true); // still paused
+
+    // And back to waiting when Claude stops again.
+    renderui({ client, agentState: 'needs_attention' });
+    expect(document.querySelector('.paused-banner')).not.toBeNull();
+  });
+
+  it('"resume now" unpauses immediately; "back to Claude" focuses the terminal', () => {
+    const client = fakeClient();
+    renderui({ client, agentState: 'needs_attention' });
+    const banner = document.querySelector('.paused-banner')!;
+    const byText = (needle: string): HTMLButtonElement =>
+      [...banner.querySelectorAll('button')].find((b) =>
+        b.textContent?.includes(needle),
+      ) as HTMLButtonElement;
+
+    act(() => {
+      byText('back to Claude').click();
+    });
+    expect(client._focusCalls).toBe(1);
+    expect(optionButtons().every((b) => b.disabled)).toBe(true); // still paused
+
+    act(() => {
+      byText('resume now').click();
+    });
+    expect(document.querySelector('.paused-banner')).toBeNull();
+    expect(document.querySelector('.resumed-banner')).toBeNull();
+    expect(optionButtons().every((b) => !b.disabled)).toBe(true);
+  });
+
+  it('Enter resumes from the pause banner', () => {
+    renderui({ agentState: 'needs_attention' });
+    expect(document.querySelector('.paused-banner')).not.toBeNull();
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', cancelable: true }));
+    });
+    expect(document.querySelector('.paused-banner')).toBeNull();
+    expect(optionButtons().every((b) => !b.disabled)).toBe(true);
+  });
+
+  it('"resume & remind" snoozes: countdown runs, then re-pauses if Claude still waits', () => {
+    renderui({ agentState: 'needs_attention' });
+    const chip = [...document.querySelectorAll('button.chip')].find((b) =>
+      b.textContent === '5m',
+    )!;
+    expect(chip).toBeDefined();
+
+    act(() => {
+      chip.click();
+    });
+    // Playing again, with a visible countdown.
+    expect(document.querySelector('.paused-banner')).toBeNull();
+    expect(optionButtons().every((b) => !b.disabled)).toBe(true);
+    expect(document.querySelector('.score.remind')?.textContent).toContain('5:00');
+
+    // Five minutes later (fake clock): Claude never got answered — re-pause.
+    act(() => {
+      vi.advanceTimersByTime(5 * 60_000);
+    });
+    expect(document.querySelector('.paused-banner')).not.toBeNull();
+    expect(document.querySelector('.score.remind')).toBeNull();
+    expect(optionButtons().every((b) => b.disabled)).toBe(true);
+  });
+
+  it('a working signal cancels an armed reminder', () => {
+    renderui({ agentState: 'needs_attention' });
+    act(() => {
+      ([...document.querySelectorAll('button.chip')].find((b) => b.textContent === '10m')!).click();
+    });
+    expect(document.querySelector('.score.remind')).not.toBeNull();
+
+    renderui({ agentState: 'working' });
+    expect(document.querySelector('.score.remind')).toBeNull(); // cancelled
+
+    act(() => {
+      vi.advanceTimersByTime(10 * 60_000);
+    });
+    expect(document.querySelector('.paused-banner')).toBeNull(); // stayed quiet
     expect(optionButtons().every((b) => !b.disabled)).toBe(true);
   });
 
