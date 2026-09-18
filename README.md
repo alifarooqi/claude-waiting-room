@@ -76,7 +76,11 @@ npm install -g @waiting-room/game-snake @waiting-room/exercise-math
 
 Your browser opens on the game. When Claude stops and needs you, the game
 pauses, you get a notification + beep (after your first click in the page),
-and Claude's terminal window comes back to the front.
+and Claude's terminal window comes back to the front. The game then stays
+paused until **you** resume it — "resume now", or "resume & remind me in
+5/10/15/30 min" to keep playing and get re-paused if Claude still waits
+when the timer fires (the banner flips to "Claude is working again" the
+moment Claude gets back to it).
 
 ### From source (dev / no marketplace yet)
 

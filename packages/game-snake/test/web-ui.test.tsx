@@ -94,6 +94,12 @@ function scoreText(): string {
   return document.querySelector('.score strong')?.textContent ?? '';
 }
 
+function byTextIn(selector: string, needle: string): HTMLButtonElement {
+  return [...document.querySelectorAll(`${selector} button`)].find((b) =>
+    b.textContent?.includes(needle),
+  ) as HTMLButtonElement;
+}
+
 describe('snake web UI', () => {
   it('renders the hud, board canvas and controls', () => {
     renderui({});
@@ -103,7 +109,7 @@ describe('snake web UI', () => {
     expect(document.querySelector('.hint')?.textContent).toContain('WASD');
   });
 
-  it('shows the pause banner when Claude needs attention, clears on resume', () => {
+  it('pauses when Claude needs attention; resume is manual, not automatic', () => {
     const client = fakeClient();
     renderui({ client });
     expect(document.querySelector('.paused-banner')).toBeNull();
@@ -112,19 +118,66 @@ describe('snake web UI', () => {
     const banner = document.querySelector('.paused-banner');
     expect(banner).not.toBeNull();
     expect(banner?.textContent).toContain('Claude needs you');
+    expect(banner?.textContent).toContain('remind me in'); // snooze chips present
 
-    // "back to Claude" button focuses the terminal via the client.
-    const btn = banner?.querySelector('button');
+    const byText = (needle: string): HTMLButtonElement =>
+      [...banner!.querySelectorAll('button')].find((b) =>
+        b.textContent?.includes(needle),
+      ) as HTMLButtonElement;
+
     act(() => {
-      (btn as HTMLButtonElement).click();
+      byText('back to Claude').click();
     });
     expect(client._focusCalls).toBe(1);
+    expect(document.querySelector('.paused-banner')).not.toBeNull(); // still paused
 
+    // Claude back at work: banner switches, game still paused.
     rerender(client, { agentState: 'working' });
     expect(document.querySelector('.paused-banner')).toBeNull();
+    expect(document.querySelector('.resumed-banner')?.textContent).toContain('working again');
+
+    act(() => {
+      byTextIn('.resumed-banner', 'resume now').click();
+    });
+    expect(document.querySelector('.resumed-banner')).toBeNull();
   });
 
-  it('runs the game loop (eats, scores) and freezes while auto-paused', async () => {
+  it('Enter resumes from the pause banner and the loop runs again', async () => {
+    const client = fakeClient();
+    renderui({ client, initialGame: hungryGame() });
+    rerender(client, { agentState: 'needs_attention' });
+    expect(document.querySelector('.paused-banner')).not.toBeNull();
+
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', cancelable: true }));
+    });
+    expect(document.querySelector('.paused-banner')).toBeNull();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(130);
+    });
+    expect(scoreText()).toBe('1'); // loop thawed by the manual resume
+  });
+
+  it('"resume & remind" snoozes: countdown runs, then re-pauses if Claude still waits', async () => {
+    const client = fakeClient();
+    renderui({ client, initialGame: hungryGame() });
+    rerender(client, { agentState: 'needs_attention' });
+
+    act(() => {
+      ([...document.querySelectorAll('button.chip')].find((b) => b.textContent === '5m')!).click();
+    });
+    expect(document.querySelector('.paused-banner')).toBeNull();
+    expect(document.querySelector('.score.remind')?.textContent).toContain('5:00');
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5 * 60_000);
+    });
+    expect(document.querySelector('.paused-banner')).not.toBeNull();
+    expect(document.querySelector('.score.remind')).toBeNull();
+  });
+
+  it('runs the game loop (eats, scores) and freezes while paused', async () => {
     const client = fakeClient();
     renderui({ client, initialGame: hungryGame() });
     expect(scoreText()).toBe('0');

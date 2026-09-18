@@ -1,6 +1,6 @@
 ---
 name: start
-description: Launch a Waiting Room side activity (Snake, math quiz, …) as a web page in the user's browser. The game auto-pauses when Claude needs input and resumes when Claude gets back to work. Use when the user asks to start a game, play while they wait, or open a side activity alongside Claude.
+description: Launch a Waiting Room side activity (Snake, math quiz, …) as a web page in the user's browser. The game pauses when Claude needs input and stays paused until the user resumes it (with an optional "remind me in N minutes" snooze). Use when the user asks to start a game, play while they wait, or open a side activity alongside Claude.
 allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/bin/wr-open snake), Bash(${CLAUDE_PLUGIN_ROOT}/bin/wr-open math), Bash(${CLAUDE_PLUGIN_ROOT}/bin/waiting-room list-games)
 ---
 
@@ -54,7 +54,10 @@ Tell the user what "pause" means here, truthfully:
   the front (macOS, best effort).
 - A web page cannot steal keyboard focus from the game by itself — the
   notification and terminal bring-forward are the attention mechanism.
-- When Claude resumes, the banner clears and the game continues.
+- When Claude gets back to work, the banner switches to "Claude is working
+  again" — but the game stays paused until the user resumes it: "resume
+  now", or "resume & remind me in 5/10/15/30 min" (keeps playing, then
+  re-pauses if Claude still waits when the timer fires).
 
 ## Notes
 

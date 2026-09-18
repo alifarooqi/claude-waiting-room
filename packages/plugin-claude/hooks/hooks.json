@@ -1,5 +1,5 @@
 {
-  "description": "Waiting Room plugin hooks — SessionStart reports the session id to Claude's context and launches the daemon; UserPromptSubmit/Stop/Notification forward lifecycle events as fire-and-forget emits that always exit 0.",
+  "description": "Waiting Room plugin hooks — SessionStart reports the session id to Claude's context and launches the daemon; UserPromptSubmit/Stop/Notification forward lifecycle events and PreToolUse/PostToolUse report Claude back at work (approving a permission fires no other hook) — all fire-and-forget emits that always exit 0.",
   "hooks": {
     "SessionStart": [
       {
@@ -26,6 +26,32 @@
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/bin/waiting-room",
             "args": ["emit", "agent_working"],
+            "async": true,
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/waiting-room",
+            "args": ["emit", "agent_working", "--reason", "pre-tool"],
+            "async": true,
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/waiting-room",
+            "args": ["emit", "agent_working", "--reason", "post-tool"],
             "async": true,
             "timeout": 10
           }

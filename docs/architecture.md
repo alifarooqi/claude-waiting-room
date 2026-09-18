@@ -12,7 +12,7 @@ Waiting Room observes Claude Code's lifecycle and coordinates side activities an
 - **`waiting-room emit`** — a one-shot client mode of the same binary, invoked by Claude Code hooks. Reads `session_id` from the hook's stdin payload, sends one event to the daemon, and **always exits 0** (fails open).
 - **SDK** (`@waiting-room/sdk`, TS) — activity authors subscribe and react via `onPause()` / `onResume()` / `onStateChange()` / `onDisconnect()` / `onReconnect()`. Owns `ensureDaemon()` and degraded-mode behavior. `activityPane: null` subscribes without a tmux binding — the mark of a web activity.
 - **web-bridge** (`@waiting-room/web-bridge`, TS) — the web-activity server: subscribes pane-less via the SDK, serves the activity's static bundle plus an SSE state stream on an **ephemeral `127.0.0.1` port behind a random URL token**, opens the OS browser, and exits when the tab closes (quit POST / idle / first-connect timeout). Its browser client (`@waiting-room/web-bridge/browser`) gives pages live state, focus/quit POSTs, and the attention effects (title flash, favicon, notification, beep).
-- **plugin-claude** — ships `hooks/hooks.json` mapping `UserPromptSubmit` → working, `Stop`/`Notification` → needs attention; `wr-session` (SessionStart) reports the session id into Claude's context; `wr-open` launches a game's bridge detached, bound to that session.
+- **plugin-claude** — ships `hooks/hooks.json` mapping `UserPromptSubmit`/`PreToolUse`/`PostToolUse` → working, `Stop`/`Notification` → needs attention; `wr-session` (SessionStart) reports the session id into Claude's context; `wr-open` launches a game's bridge detached, bound to that session.
 - **Reference activities** — Snake + math quiz: React DOM UIs bundled with esbuild, served by the bridge.
 
 ## State machine (per session)
@@ -25,7 +25,7 @@ UNKNOWN ─────────────────▶ WORKING ───
    └──────── GC (stale >5min + pane gone) ──────────┘
 ```
 
-States are **absolute declarations**: `Stop` fully defines NEEDS_ATTENTION, `UserPromptSubmit` fully defines WORKING. A missed event is therefore self-healing — the next event restores correct state. No durable queue is required.
+States are **absolute declarations**: `Stop` fully defines NEEDS_ATTENTION, `UserPromptSubmit` and tool use fully define WORKING. A missed event is therefore self-healing — the next event restores correct state. No durable queue is required.
 
 ## Separation of concerns
 
